@@ -290,12 +290,6 @@ impl Phy {
         )
     }
 
-    pub fn get_tfce(&mut self) -> Result<bool, DError> {
-        let status = self.read_status()?;
-        Ok(status & PSTATUS::CAPABILITY_100BASE_T4::Capable.value != 0)
-    }
-
-
     pub fn is_auto_negotiation_complete(&mut self) -> Result<bool, DError> {
         let status = self.read_status()?;
         Ok(status & PSTATUS::AUTO_NEGOTIATION_COMPLETE::Complete.value != 0)
@@ -309,7 +303,6 @@ impl Phy {
         self.write_mdic(PHY_CONTROL, control)
     }
 }
-
 
 // pub struct Synced {
 //     mac: Mac,
