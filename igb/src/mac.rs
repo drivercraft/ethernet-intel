@@ -1,6 +1,6 @@
 use core::{fmt::Debug, ptr::NonNull, time::Duration};
 
-use log::{debug, error};
+use log::error;
 use mbarrier::mb;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 

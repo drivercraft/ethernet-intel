@@ -53,7 +53,14 @@ impl Igb {
         self.mac.borrow_mut().set_link_up();
         self.phy.wait_for_auto_negotiation_complete()?;
         debug!("Auto-negotiation complete");
+        self.config_fc_after_link_up()?;
 
+        Ok(())
+    }
+
+    fn config_fc_after_link_up(&mut self) -> Result<(), DError> {
+        // TODO 参考 drivers/net/ethernet/intel/igb/e1000_mac.c
+        // igb_config_fc_after_link_up
         Ok(())
     }
 

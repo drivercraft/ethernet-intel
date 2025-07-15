@@ -279,11 +279,6 @@ impl Phy {
         self.read_mdic(PHY_STATUS)
     }
 
-    pub fn is_link_up(&mut self) -> Result<bool, DError> {
-        let status = self.read_status()?;
-        Ok(status & PSTATUS::LINK_STATUS::Up.value != 0)
-    }
-
     pub fn wait_for_auto_negotiation_complete(&mut self) -> Result<(), DError> {
         let interval = core::time::Duration::from_millis(100);
         let try_count = 30; // Wait for up to 3 seconds
@@ -295,67 +290,15 @@ impl Phy {
         )
     }
 
+    pub fn get_tfce(&mut self) -> Result<bool, DError> {
+        let status = self.read_status()?;
+        Ok(status & PSTATUS::CAPABILITY_100BASE_T4::Capable.value != 0)
+    }
+
+
     pub fn is_auto_negotiation_complete(&mut self) -> Result<bool, DError> {
         let status = self.read_status()?;
         Ok(status & PSTATUS::AUTO_NEGOTIATION_COMPLETE::Complete.value != 0)
-    }
-
-    pub fn reset(&mut self) -> Result<(), DError> {
-        debug!("Resetting PHY at address {}", self.addr);
-        let mut control = self.read_mdic(PHY_CONTROL)?;
-        control |= PCTRL::RESET::Reset.value;
-        self.write_mdic(PHY_CONTROL, control)?;
-
-        // Wait for reset to complete
-        loop {
-            let control = self.read_mdic(PHY_CONTROL)?;
-            if control & PCTRL::RESET::Reset.value == 0 {
-                break;
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn set_speed_and_duplex(
-        &mut self,
-        speed_1000: bool,
-        speed_100: bool,
-        full_duplex: bool,
-    ) -> Result<(), DError> {
-        debug!(
-            "Setting PHY speed and duplex: 1000={speed_1000}, 100={speed_100}, full_duplex={full_duplex}"
-        );
-
-        let mut control = self.read_mdic(PHY_CONTROL)?;
-
-        // Clear speed and duplex bits
-        control &= !(PCTRL::SPEED_SELECTION_MSB::SET.value
-            | PCTRL::SPEED_SELECTION_LSB::SET.value
-            | PCTRL::DUPLEX_MODE::SET.value);
-
-        // Set duplex mode
-        if full_duplex {
-            control |= PCTRL::DUPLEX_MODE::Full.value;
-        }
-
-        // Set speed selection
-        match (speed_1000, speed_100) {
-            (true, false) => {
-                // 1000 Mb/s = 10b (MSB=1, LSB=0)
-                control |= PCTRL::SPEED_SELECTION_MSB::SET.value;
-            }
-            (false, true) => {
-                // 100 Mb/s = 01b (MSB=0, LSB=1)
-                control |= PCTRL::SPEED_SELECTION_LSB::SET.value;
-            }
-            (false, false) => {
-                // 10 Mb/s = 00b (MSB=0, LSB=0) - already cleared
-            }
-            _ => return Err(DError::Unknown("Invalid speed combination")), // Invalid combination
-        }
-
-        self.write_mdic(PHY_CONTROL, control)
     }
 
     pub fn enable_auto_negotiation(&mut self) -> Result<(), DError> {
@@ -365,92 +308,8 @@ impl Phy {
             | PCTRL::RESTART_AUTO_NEGOTIATION::Restart.value;
         self.write_mdic(PHY_CONTROL, control)
     }
-
-    pub fn disable_auto_negotiation(&mut self) -> Result<(), DError> {
-        debug!(
-            "Disabling auto-negotiation for PHY at address {}",
-            self.addr
-        );
-        let mut control = self.read_mdic(PHY_CONTROL)?;
-        control &= !PCTRL::AUTO_NEGOTIATION_ENABLE::Enable.value;
-        self.write_mdic(PHY_CONTROL, control)
-    }
-
-    /// Example usage of the PHY register bitfields
-    /// This shows how to properly configure and read PHY registers using the defined bitfields
-    pub fn init_1000base_t(&mut self) -> Result<(), DError> {
-        // Reset PHY first
-        self.reset()?;
-
-        // Power up the PHY
-        self.power_up()?;
-
-        // Enable auto-negotiation (required for 1000BASE-T)
-        self.enable_auto_negotiation()?;
-
-        debug!("PHY initialized for 1000BASE-T operation");
-        Ok(())
-    }
-
-    /// Initialize PHY for fixed speed operation (no auto-negotiation)
-    pub fn init_fixed_speed(
-        &mut self,
-        speed_1000: bool,
-        speed_100: bool,
-        full_duplex: bool,
-    ) -> Result<(), DError> {
-        // Reset PHY first
-        self.reset()?;
-
-        // Power up the PHY
-        self.power_up()?;
-
-        // Disable auto-negotiation
-        self.disable_auto_negotiation()?;
-
-        // Set fixed speed and duplex
-        self.set_speed_and_duplex(speed_1000, speed_100, full_duplex)?;
-
-        debug!("PHY initialized for fixed speed operation");
-        Ok(())
-    }
-
-    /// Get PHY status information
-    pub fn get_status_info(&mut self) -> Result<PhyStatusInfo, DError> {
-        let status = self.read_status()?;
-
-        Ok(PhyStatusInfo {
-            link_up: status & PSTATUS::LINK_STATUS::Up.value != 0,
-            auto_negotiation_complete: status & PSTATUS::AUTO_NEGOTIATION_COMPLETE::Complete.value
-                != 0,
-            auto_negotiation_capable: status & PSTATUS::AUTO_NEGOTIATION_ABILITY::Capable.value
-                != 0,
-            extended_status: status & PSTATUS::EXTENDED_STATUS::Extended.value != 0,
-            capability_100base_tx_fd: status & PSTATUS::CAPABILITY_100BASE_TX_FD::Capable.value
-                != 0,
-            capability_100base_tx_hd: status & PSTATUS::CAPABILITY_100BASE_TX_HD::Capable.value
-                != 0,
-            capability_10base_t_fd: status & PSTATUS::CAPABILITY_10BASE_T_FD::Capable.value != 0,
-            capability_10base_t_hd: status & PSTATUS::CAPABILITY_10BASE_T_HD::Capable.value != 0,
-            remote_fault: status & PSTATUS::REMOTE_FAULT::Fault.value != 0,
-            jabber_detect: status & PSTATUS::JABBER_DETECT::Jabber.value != 0,
-        })
-    }
 }
 
-#[derive(Debug, Clone)]
-pub struct PhyStatusInfo {
-    pub link_up: bool,
-    pub auto_negotiation_complete: bool,
-    pub auto_negotiation_capable: bool,
-    pub extended_status: bool,
-    pub capability_100base_tx_fd: bool,
-    pub capability_100base_tx_hd: bool,
-    pub capability_10base_t_fd: bool,
-    pub capability_10base_t_hd: bool,
-    pub remote_fault: bool,
-    pub jabber_detect: bool,
-}
 
 // pub struct Synced {
 //     mac: Mac,
