@@ -39,9 +39,15 @@ impl Igb {
 
         let link_mode = self.mac.borrow().link_mode().unwrap();
         debug!("link mode: {link_mode:?}");
-
         self.phy.power_up()?;
+
         self.setup_phy_and_the_link()?;
+
+        self.mac.borrow_mut().set_link_up();
+
+        self.phy.wait_for_auto_negotiation_complete()?;
+        debug!("Auto-negotiation complete");
+        self.config_fc_after_link_up()?;
 
         self.init_stat();
 
@@ -49,11 +55,6 @@ impl Igb {
         self.init_tx();
 
         // self.enable_interrupts();
-
-        self.mac.borrow_mut().set_link_up();
-        self.phy.wait_for_auto_negotiation_complete()?;
-        debug!("Auto-negotiation complete");
-        self.config_fc_after_link_up()?;
 
         Ok(())
     }
