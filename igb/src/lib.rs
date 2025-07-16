@@ -8,6 +8,10 @@ use tock_registers::interfaces::*;
 pub use trait_ffi::impl_extern_trait;
 
 pub use crate::err::DError;
+use crate::{
+    descriptor::{AdvRxDesc, AdvTxDesc},
+    ring::Ring,
+};
 
 extern crate alloc;
 
@@ -15,18 +19,33 @@ mod err;
 mod mac;
 #[macro_use]
 pub mod osal;
+mod descriptor;
 mod phy;
+mod ring;
+
+const DEFAULT_RING_SIZE: usize = 256;
 
 pub struct Igb {
     mac: RefCell<mac::Mac>,
     phy: phy::Phy,
+    tx_ring: Ring<AdvTxDesc>,
+    rx_ring: Ring<AdvRxDesc>,
 }
 
 impl Igb {
-    pub fn new(iobase: NonNull<u8>) -> Self {
+    pub fn new(iobase: NonNull<u8>) -> Result<Self, DError> {
         let mac = RefCell::new(mac::Mac::new(iobase));
         let phy = phy::Phy::new(mac.clone());
-        Self { mac, phy }
+
+        let tx_ring = Ring::new(DEFAULT_RING_SIZE)?;
+        let rx_ring = Ring::new(DEFAULT_RING_SIZE)?;
+
+        Ok(Self {
+            mac,
+            phy,
+            tx_ring,
+            rx_ring,
+        })
     }
 
     pub fn open(&mut self) -> Result<(), DError> {
@@ -97,7 +116,23 @@ impl Igb {
         // disable rx when configing.
         self.mac.borrow_mut().disable_rx();
 
-        // self.rx_ring.init();
+        // Program the descriptor base address with the address of the region.
+
+        // Set the length register to the size of the descriptor ring.
+
+        // Program SRRCTL of the queue according to the size of the buffers and the required header handling.
+
+        // If header split or header replication is required for this queue, program the PSRTYPE register according to the required headers.
+
+        // Enable the queue by setting RXDCTL.ENABLE. In the case of queue zero, the enable bit is set by default - so the ring parameters should be set before RCTL.RXEN is set.
+
+        // Poll the RXDCTL register until the ENABLE bit is set. The tail should not be bumped before this bit was read as one.
+
+        // Program the direction of packets to this queue according to the mode select in MRQC. Packets directed to a disabled queue is dropped.
+
+        // Note: The tail register of the queue (RDT[n]) should not be bumped until the queue is enabled.
+
+        self.rx_ring.init();
 
         // self.reg.write_reg(RCTL::RXEN | RCTL::SZ_4096);
         self.mac
@@ -108,11 +143,11 @@ impl Igb {
     }
 
     fn init_tx(&mut self) {
-        // self.reg.write_reg(TCTL::empty());
+        // self.mac.borrow_mut().reg_mut().tctl.write(mac::TCTL::empty());
 
-        // self.tx_ring.init();
+        self.tx_ring.init();
 
-        // self.reg.write_reg(TCTL::EN);
+        // self.mac.borrow_mut().write_reg(TCTL::EN);
     }
 }
 
