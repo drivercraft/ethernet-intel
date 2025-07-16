@@ -5,6 +5,7 @@ use core::{cell::RefCell, ptr::NonNull};
 use log::debug;
 pub use mac::{MacAddr6, MacStatus};
 use tock_registers::interfaces::*;
+pub use trait_ffi::impl_extern_trait;
 
 pub use crate::err::DError;
 

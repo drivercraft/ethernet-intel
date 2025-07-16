@@ -16,7 +16,7 @@ mod tests {
         println,
         time::{sleep, spin_delay},
     };
-    use eth_igb::{Igb, osal::Kernel};
+    use eth_igb::{Igb, impl_trait, osal::Kernel};
     use log::info;
     use pcie::{CommandRegister, RootComplexGeneric, SimpleBarAllocator};
 
@@ -118,11 +118,12 @@ mod tests {
 
     struct KernelImpl;
 
-    impl Kernel for KernelImpl {
-        fn sleep(duration: Duration) {
-            spin_delay(duration);
+    impl_trait! {
+
+        impl Kernel for KernelImpl {
+            fn sleep(duration: Duration) {
+                spin_delay(duration);
+            }
         }
     }
-
-    eth_igb::set_impl!(KernelImpl);
 }
