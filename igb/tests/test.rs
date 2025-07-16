@@ -114,7 +114,7 @@ mod tests {
 
                 let addr = iomap(bar_addr.into(), bar_size);
 
-                let igb = Igb::new(addr);
+                let igb = Igb::new(addr).unwrap();
                 return Some(igb);
             }
         }

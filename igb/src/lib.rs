@@ -37,8 +37,8 @@ impl Igb {
         let mac = RefCell::new(mac::Mac::new(iobase));
         let phy = phy::Phy::new(mac.clone());
 
-        let tx_ring = Ring::new(DEFAULT_RING_SIZE)?;
-        let rx_ring = Ring::new(DEFAULT_RING_SIZE)?;
+        let tx_ring = Ring::new(0, iobase, DEFAULT_RING_SIZE)?;
+        let rx_ring = Ring::new(0, iobase, DEFAULT_RING_SIZE)?;
 
         Ok(Self {
             mac,
@@ -71,7 +71,7 @@ impl Igb {
 
         self.init_stat();
 
-        self.init_rx();
+        self.init_rx()?;
         self.init_tx();
 
         self.mac.borrow_mut().enable_interrupts();
@@ -112,40 +112,27 @@ impl Igb {
         //TODO
     }
     /// 4.5.9 Receive Initialization
-    fn init_rx(&mut self) {
+    fn init_rx(&mut self) -> Result<(), DError> {
         // disable rx when configing.
         self.mac.borrow_mut().disable_rx();
 
-        // Program the descriptor base address with the address of the region.
+        // 初始化 ring
+        self.rx_ring.init()?;
 
-        // Set the length register to the size of the descriptor ring.
-
-        // Program SRRCTL of the queue according to the size of the buffers and the required header handling.
-
-        // If header split or header replication is required for this queue, program the PSRTYPE register according to the required headers.
-
-        // Enable the queue by setting RXDCTL.ENABLE. In the case of queue zero, the enable bit is set by default - so the ring parameters should be set before RCTL.RXEN is set.
-
-        // Poll the RXDCTL register until the ENABLE bit is set. The tail should not be bumped before this bit was read as one.
-
-        // Program the direction of packets to this queue according to the mode select in MRQC. Packets directed to a disabled queue is dropped.
-
-        // Note: The tail register of the queue (RDT[n]) should not be bumped until the queue is enabled.
-
-        self.rx_ring.init();
-
-        // self.reg.write_reg(RCTL::RXEN | RCTL::SZ_4096);
+        // 最后启用 RX
         self.mac
             .borrow_mut()
             .reg_mut()
             .rctl
             .modify(mac::RCTL::RXEN::Enabled);
+
+        Ok(())
     }
 
     fn init_tx(&mut self) {
         // self.mac.borrow_mut().reg_mut().tctl.write(mac::TCTL::empty());
 
-        self.tx_ring.init();
+        // self.tx_ring.init();
 
         // self.mac.borrow_mut().write_reg(TCTL::EN);
     }

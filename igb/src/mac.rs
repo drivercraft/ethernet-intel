@@ -2,7 +2,9 @@ use core::{fmt::Debug, ptr::NonNull, time::Duration};
 
 use log::error;
 use mbarrier::mb;
-use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
+use tock_registers::{
+    fields::FieldValue, interfaces::*, register_bitfields, register_structs, registers::*,
+};
 
 use crate::{DError, Speed, osal::wait_for};
 
@@ -20,13 +22,13 @@ register_structs! {
         (0x104 => _rsv7),
         (0x400 => tctl: ReadWrite<u32>),
         (0x404 => _rsv12),
-        (0x01524 => eims: ReadWrite<u32>),
-        (0x01528 => eimc: ReadWrite<u32>),
-        (0x0152c => eiac: ReadWrite<u32>),
-        (0x01530 => eiam: ReadWrite<u32>),
-        (0x01534 => _rsv5),
-        (0x01580 => eicr: ReadWrite<u32>),
-        (0x01584 => _rsv6),
+        (0x1524 => eims: ReadWrite<u32>),
+        (0x1528 => eimc: ReadWrite<u32>),
+        (0x152c => eiac: ReadWrite<u32>),
+        (0x1530 => eiam: ReadWrite<u32>),
+        (0x1534 => _rsv5),
+        (0x1580 => eicr: ReadWrite<u32>),
+        (0x1584 => _rsv6),
         (0x5400 => ralh_0_15: [ReadWrite<u32>; 32]),
         (0x5480 => _rsv8),
         (0x54e0 => ralh_16_23: [ReadWrite<u32>;32]),
@@ -38,7 +40,7 @@ register_structs! {
         (0x5B60 => _rsv11),
 
         // The end of the struct is marked as follows.
-        (0xBFFF => @END),
+        (0xEFFF => @END),
     }
 }
 
@@ -193,7 +195,9 @@ register_bitfields! [
             DoNotStrip = 0,
             Strip = 1,
         ],
-    ]
+    ],
+
+
 ];
 
 #[derive(Clone, Copy)]
@@ -316,6 +320,10 @@ impl Mac {
 
     pub fn disable_rx(&mut self) {
         self.reg_mut().rctl.modify(RCTL::RXEN::Disabled);
+    }
+
+    pub fn enable_rx(&mut self) {
+        self.reg_mut().rctl.modify(RCTL::RXEN::Enabled);
     }
 
     fn ral(&self, i: usize) -> u32 {
