@@ -17,8 +17,8 @@ const SRRCTL: usize = 0xC00C; // RX Descriptor Control
 const RDH: usize = 0xC010; // RX Descriptor Head
 const RDT: usize = 0xC018; // RX Descriptor Tail
 const RXDCTL: usize = 0xC028; // RX Descriptor Control
-const RXCTL: usize = 0xC014; // RX Control
-const RQDPC: usize = 0xC030; // RX Descriptor Polling Control
+// const RXCTL: usize = 0xC014; // RX Control
+// const RQDPC: usize = 0xC030; // RX Descriptor Polling Control
 
 register_bitfields! [
     // First parameter is the register width. Can be u8, u16, u32, or u64.
@@ -71,8 +71,7 @@ impl<D: Descriptor> Ring<D> {
         let descriptors =
             DVec::zeros(size, 0x1000, Direction::Bidirectional).ok_or(DError::NoMemory)?;
 
-        let ring_base =
-            unsafe { NonNull::new_unchecked(mmio_base.as_ptr().add(idx * 0x40) as *mut u8) };
+        let ring_base = unsafe { mmio_base.add(idx * 0x40) };
 
         Ok(Self {
             descriptors,

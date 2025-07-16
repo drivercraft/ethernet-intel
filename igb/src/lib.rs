@@ -4,13 +4,12 @@ use core::{cell::RefCell, ptr::NonNull};
 
 use log::debug;
 pub use mac::{MacAddr6, MacStatus};
-use tock_registers::interfaces::*;
 pub use trait_ffi::impl_extern_trait;
 
 pub use crate::err::DError;
 use crate::{
     descriptor::{AdvRxDesc, AdvTxDesc},
-    ring::Ring,
+    ring::{DEFAULT_RING_SIZE, Ring},
 };
 
 extern crate alloc;
@@ -22,8 +21,6 @@ pub mod osal;
 mod descriptor;
 mod phy;
 mod ring;
-
-const DEFAULT_RING_SIZE: usize = 256;
 
 pub struct Igb {
     mac: RefCell<mac::Mac>,
@@ -120,11 +117,7 @@ impl Igb {
         self.rx_ring.init()?;
 
         // 最后启用 RX
-        self.mac
-            .borrow_mut()
-            .reg_mut()
-            .rctl
-            .modify(mac::RCTL::RXEN::Enabled);
+        self.mac.borrow_mut().enable_rx();
 
         Ok(())
     }

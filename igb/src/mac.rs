@@ -2,9 +2,7 @@ use core::{fmt::Debug, ptr::NonNull, time::Duration};
 
 use log::error;
 use mbarrier::mb;
-use tock_registers::{
-    fields::FieldValue, interfaces::*, register_bitfields, register_structs, registers::*,
-};
+use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
 use crate::{DError, Speed, osal::wait_for};
 
