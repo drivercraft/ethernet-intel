@@ -6,4 +6,6 @@ pub enum DError {
     Timeout,
     #[error("No memory available")]
     NoMemory,
+    #[error("Invalid parameter")]
+    InvalidParameter,
 }

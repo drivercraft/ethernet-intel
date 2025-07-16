@@ -4,7 +4,7 @@ use dma_api::{DVec, Direction};
 use tock_registers::register_bitfields;
 
 use crate::{
-    descriptor::{AdvRxDesc, Descriptor},
+    descriptor::{AdvRxDesc, AdvRxDescRead, Descriptor},
     err::DError,
     osal::wait_for,
 };
@@ -19,6 +19,9 @@ const RDT: usize = 0xC018; // RX Descriptor Tail
 const RXDCTL: usize = 0xC028; // RX Descriptor Control
 // const RXCTL: usize = 0xC014; // RX Control
 // const RQDPC: usize = 0xC030; // RX Descriptor Polling Control
+
+const PACKET_SIZE_KB: u32 = 4; // 4KB packet size
+const PACKET_SIZE: u32 = PACKET_SIZE_KB * 1024; // 4KB in bytes
 
 register_bitfields! [
     // First parameter is the register width. Can be u8, u16, u32, or u64.
@@ -63,6 +66,7 @@ register_bitfields! [
 
 pub struct Ring<D: Descriptor> {
     pub descriptors: DVec<D>,
+    packets: DVec<u8>,
     ring_base: NonNull<u8>,
 }
 
@@ -72,10 +76,13 @@ impl<D: Descriptor> Ring<D> {
             DVec::zeros(size, 0x1000, Direction::Bidirectional).ok_or(DError::NoMemory)?;
 
         let ring_base = unsafe { mmio_base.add(idx * 0x40) };
+        let packets = DVec::zeros(size * PACKET_SIZE as usize, 0x1000, Direction::Bidirectional)
+            .ok_or(DError::NoMemory)?;
 
         Ok(Self {
             descriptors,
             ring_base,
+            packets,
         })
     }
 
@@ -119,7 +126,9 @@ impl Ring<AdvRxDesc> {
         // Program SRRCTL of the queue according to the size of the buffers and the required header handling.
         self.reg_write(
             SRRCTL,
-            (SRRCTL::DESCTYPE::AdvancedOneBuffer + SRRCTL::BSIZEPACKET.val(2)).value,
+            (SRRCTL::DESCTYPE::AdvancedOneBuffer 
+                // 4kB 包大小
+                + SRRCTL::BSIZEPACKET.val(PACKET_SIZE_KB)).value,
         );
 
         // If header split or header replication is required for this queue,
@@ -142,6 +151,12 @@ impl Ring<AdvRxDesc> {
             Duration::from_millis(1),
             Some(1000),
         )?;
+
+        for i in 0..self.count() {
+            let paddr = self.packets.bus_addr() + i as u64 * PACKET_SIZE as u64;
+            let read_desc =  AdvRxDescRead::new(paddr, 0, false);
+            self.descriptors.set(i, AdvRxDesc { read: read_desc });
+        }
 
         // Program the direction of packets to this queue according to the mode select in MRQC.
         // Packets directed to a disabled queue is dropped.
@@ -190,5 +205,40 @@ impl Ring<AdvRxDesc> {
                 + RXDCTL::SWFLUSH.val(1))
             .value,
         );
+    }
+
+    /// 检查描述符是否已完成(DD位)
+    ///
+    /// # 参数
+    /// - `desc_index`: 描述符索引
+    ///
+    /// # 返回
+    /// 如果描述符已完成则返回 true，否则返回 false
+    pub fn is_descriptor_done(&self, desc_index: usize) -> bool {
+        if desc_index >= self.descriptors.len() {
+            return false;
+        }
+
+        // 检查写回格式中的DD位
+        let desc = &self.descriptors[desc_index];
+        unsafe {
+            let wb = desc.write;
+            (wb.lo_dword.fields.hdr_status & crate::descriptor::rx_desc_consts::DD_BIT) != 0
+        }
+    }
+
+    /// 获取当前头部指针值
+    pub fn get_head(&self) -> u32 {
+        self.reg_read(RDH)
+    }
+
+    /// 获取当前尾部指针值
+    pub fn get_tail(&self) -> u32 {
+        self.reg_read(RDT)
+    }
+
+    /// 更新尾部指针
+    pub fn update_tail(&mut self, tail: u32) {
+        self.reg_write(RDT, tail);
     }
 }
