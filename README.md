@@ -1,4 +1,8 @@
-# 运行测试
+# Ethernet-Intel
+
+[![Test CI](https://github.com/drivercraft/ethernet-intel/actions/workflows/ci.yml/badge.svg)](https://github.com/drivercraft/ethernet-intel/actions/workflows/ci.yml)
+
+## 运行测试
 
 安装 `ostool`
 
