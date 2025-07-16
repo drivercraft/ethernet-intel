@@ -2,21 +2,26 @@
 #![no_main]
 #![feature(used_with_arg)]
 
+use core::time::Duration;
+
+use bare_test::time::spin_delay;
+use eth_igb::{impl_trait, osal::Kernel};
+
 extern crate alloc;
 extern crate bare_test;
 
 #[bare_test::tests]
 mod tests {
-    use core::{hint::spin_loop, time::Duration};
+    use core::time::Duration;
 
     use bare_test::{
         fdt_parser::PciSpace,
         globals::{PlatformInfoKind, global_val},
         mem::iomap,
         println,
-        time::{sleep, spin_delay},
+        time::spin_delay,
     };
-    use eth_igb::{Igb, impl_trait, osal::Kernel};
+    use eth_igb::Igb;
     use log::info;
     use pcie::{CommandRegister, RootComplexGeneric, SimpleBarAllocator};
 
@@ -115,15 +120,13 @@ mod tests {
         }
         None
     }
+}
+struct KernelImpl;
 
-    struct KernelImpl;
-
-    impl_trait! {
-
-        impl Kernel for KernelImpl {
-            fn sleep(duration: Duration) {
-                spin_delay(duration);
-            }
+impl_trait! {
+    impl Kernel for KernelImpl {
+        fn sleep(duration: Duration) {
+            spin_delay(duration);
         }
     }
 }

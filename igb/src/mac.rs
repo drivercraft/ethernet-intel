@@ -260,7 +260,7 @@ impl Mac {
         Some(
             match self.reg().ctrl_ext.read_as_enum(CTRL_EXT::LINK_MODE) {
                 Some(CTRL_EXT::LINK_MODE::Value::DircetCooper) => LinkMode::DirectCooper,
-                Some(CTRL_EXT::LINK_MODE::Value::SGMII) => LinkMode::SGMII,
+                Some(CTRL_EXT::LINK_MODE::Value::SGMII) => LinkMode::Sgmii,
                 Some(CTRL_EXT::LINK_MODE::Value::InternalSerdes) => LinkMode::InternalSerdes,
                 None => return None,
             },
@@ -401,6 +401,6 @@ pub struct MacStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkMode {
     DirectCooper,
-    SGMII,
+    Sgmii,
     InternalSerdes,
 }

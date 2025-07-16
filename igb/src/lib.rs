@@ -55,7 +55,7 @@ impl Igb {
         self.init_rx();
         self.init_tx();
 
-        // self.enable_interrupts();
+        self.mac.borrow_mut().enable_interrupts();
 
         Ok(())
     }
@@ -95,7 +95,7 @@ impl Igb {
     /// 4.5.9 Receive Initialization
     fn init_rx(&mut self) {
         // disable rx when configing.
-        // self.mac.borrow_mut().disable_rx();
+        self.mac.borrow_mut().disable_rx();
 
         // self.rx_ring.init();
 
