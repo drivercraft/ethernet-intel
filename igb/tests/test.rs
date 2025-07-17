@@ -77,6 +77,7 @@ mod tests {
         }
 
         let mut rx = igb.new_rx_ring().unwrap();
+        let mut tx = igb.new_tx_ring().unwrap();
 
         igb.open().unwrap();
         info!("igb opened: {:#?}", igb.status());

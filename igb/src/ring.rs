@@ -7,7 +7,7 @@ use tock_registers::register_bitfields;
 use futures::{stream::Stream, task::AtomicWaker};
 
 use crate::{
-    descriptor::{AdvRxDesc, AdvRxDescRead, Descriptor},
+    descriptor::{AdvRxDesc, AdvRxDescRead, AdvTxDesc, Descriptor},
     err::DError,
     osal::wait_for,
 };
@@ -368,4 +368,41 @@ impl <'a> Future for RcvFuture<'a> {
         core::task::Poll::Pending
     }
     
+}
+
+
+impl Ring<AdvTxDesc> {
+
+    pub fn init(&mut self) -> Result<(), DError> {
+
+        // 初始化 TX 描述符环
+        // 这里可以添加 TX 描述符的初始化逻辑
+        Ok(())
+    }
+}
+
+pub struct TxRing(UnsafeCell<Box<Ring<AdvTxDesc>>>);
+
+impl TxRing {
+    pub(crate) fn new(ring: Ring<AdvTxDesc>) -> Self {
+        Self(UnsafeCell::new(Box::new(ring)))
+    }
+
+    pub(crate) fn addr(&mut self) -> NonNull<Ring<AdvTxDesc>> {
+        unsafe { NonNull::from((*self.0.get()).as_mut()) }
+    }
+
+    pub fn this(&self) -> &Ring<AdvTxDesc> {
+        unsafe { &*self.0.get() }
+    }
+
+    pub fn this_mut(&mut self) -> &mut Ring<AdvTxDesc> {
+        unsafe { &mut *self.0.get() }
+    }
+    
+    pub async fn send(&mut self, buff: &[u8]) -> Result<(), DError> {
+        // 发送数据包
+        // 这里可以添加发送逻辑
+        Ok(())
+    }
 }

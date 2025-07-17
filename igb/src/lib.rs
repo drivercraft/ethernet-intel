@@ -8,8 +8,8 @@ pub use trait_ffi::impl_extern_trait;
 
 pub use crate::err::DError;
 use crate::{
-    descriptor::AdvRxDesc,
-    ring::{DEFAULT_RING_SIZE, Ring},
+    descriptor::{AdvRxDesc, AdvTxDesc},
+    ring::{DEFAULT_RING_SIZE, Ring, TxRing},
 };
 
 extern crate alloc;
@@ -29,6 +29,7 @@ pub struct Igb {
     mac: mac::Mac,
     phy: phy::Phy,
     rx_ring_addrs: [usize; 16],
+    tx_ring_addrs: [usize; 16],
 }
 
 impl Igb {
@@ -40,6 +41,7 @@ impl Igb {
             mac,
             phy,
             rx_ring_addrs: [0; 16],
+            tx_ring_addrs: [0; 16],
         })
     }
 
@@ -74,10 +76,18 @@ impl Igb {
     }
 
     pub fn new_rx_ring(&mut self) -> Result<RxRing, DError> {
-        let mut ring = Ring::new(0, self.mac.iobase(), DEFAULT_RING_SIZE)?;
+        let mut ring: Ring<AdvRxDesc> = Ring::new(0, self.mac.iobase(), DEFAULT_RING_SIZE)?;
         ring.init()?;
         let mut ring = RxRing::new(ring);
         self.rx_ring_addrs[0] = ring.addr().as_ptr() as usize;
+        Ok(ring)
+    }
+
+    pub fn new_tx_ring(&mut self) -> Result<TxRing, DError> {
+        let mut ring: Ring<AdvTxDesc> = Ring::new(0, self.mac.iobase(), DEFAULT_RING_SIZE)?;
+        ring.init()?;
+        let mut ring = TxRing::new(ring);
+        self.tx_ring_addrs[0] = ring.addr().as_ptr() as usize;
         Ok(ring)
     }
 
