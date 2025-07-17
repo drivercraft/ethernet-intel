@@ -37,7 +37,7 @@ const TDH: usize = 0xE010; // TX Descriptor Head
 const TDT: usize = 0xE018; // TX Descriptor Tail
 const TXDCTL: usize = 0xE028; // TX Descriptor Control
 // const TDWBAL: usize = 0xE038; // TX Descriptor Write Back Address Low
-// const TWDBAH: usize = 0xE03C; // TX Descriptor Write Back Address High
+// const TDWBAH: usize = 0xE03C; // TX Descriptor Write Back Address High
 
 const PACKET_SIZE_KB: u32 = 2;
 const PACKET_SIZE: u32 = PACKET_SIZE_KB * 1024;
@@ -108,14 +108,26 @@ struct Ring<D: Descriptor> {
     hw_head: usize,
     waker: AtomicWaker,
     meta_ls: Vec<RingElemMeta>,
+    pkts: Vec<DVec<u8>>,
+    pkt_size: usize,
 }
 
 impl<D: Descriptor> Ring<D> {
-    pub fn new(idx: usize, mmio_base: NonNull<u8>, size: usize) -> Result<Self, DError> {
+    pub fn new(
+        idx: usize,
+        mmio_base: NonNull<u8>,
+        size: usize,
+        pkt_size: usize,
+        dir: Direction,
+    ) -> Result<Self, DError> {
         let descriptors =
             DVec::zeros(size, 0x1000, Direction::Bidirectional).ok_or(DError::NoMemory)?;
 
         let ring_base = unsafe { mmio_base.add(idx * 0x40) };
+        let mut pkts = Vec::with_capacity(size);
+        for _ in 0..size {
+            pkts.push(DVec::zeros(pkt_size, pkt_size, dir).ok_or(DError::NoMemory)?);
+        }
 
         Ok(Self {
             descriptors,
@@ -124,6 +136,8 @@ impl<D: Descriptor> Ring<D> {
             current_head: 0,
             hw_head: 0,
             meta_ls: alloc::vec![RingElemMeta::default(); size],
+            pkts,
+            pkt_size,
         })
     }
 

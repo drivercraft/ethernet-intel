@@ -1,4 +1,7 @@
+use core::ops::Deref;
+
 use alloc::sync::Arc;
+use log::trace;
 
 use super::*;
 
@@ -76,7 +79,7 @@ impl RingInner {
         if buff.len() > PACKET_SIZE as usize {
             return Err(DError::InvalidParameter);
         }
-
+        trace!("send {}", buff.len());
         let tail = self.get_tx_tail() as usize;
         let next_tail = (tail + 1) % self.count();
         let head = self.get_tx_head() as usize;
@@ -86,16 +89,16 @@ impl RingInner {
             return Err(DError::NoMemory); // 环形缓冲区已满
         }
 
-        // 准备DMA缓冲区
-        let dma_buff = {
-            let sl = DSlice::from(buff);
-            sl.bus_addr()
-        };
+        for (i, &v) in buff.iter().enumerate() {
+            self.pkts[next_tail].set(i, v);
+        }
+
+        let buffer_addr = self.pkts[next_tail].bus_addr();
 
         // 设置描述符
         let desc = AdvTxDesc {
             read: crate::descriptor::AdvTxDescRead {
-                buffer_addr: dma_buff,
+                buffer_addr,
                 cmd_type_len: crate::descriptor::tx_desc_consts::CMD_EOP
                     | crate::descriptor::tx_desc_consts::CMD_IFCS
                     | crate::descriptor::tx_desc_consts::CMD_RS
@@ -114,13 +117,6 @@ impl RingInner {
         // 更新尾部指针
         self.reg_write(TDT, next_tail as u32);
 
-        // 等待硬件发送完成
-        wait_for(
-            || self.is_tx_descriptor_done(tail),
-            Duration::from_micros(100),
-            Some(1000), // 最多等待1000次检查，约100ms
-        )?;
-
         Ok(())
     }
 }
@@ -131,7 +127,13 @@ unsafe impl Send for TxRing {}
 
 impl TxRing {
     pub(crate) fn new(idx: usize, mmio_base: NonNull<u8>, size: usize) -> Result<Self, DError> {
-        let mut ring_inner = Ring::new(idx, mmio_base, size)?;
+        let mut ring_inner = Ring::new(
+            idx,
+            mmio_base,
+            size,
+            PACKET_SIZE as usize,
+            Direction::ToDevice,
+        )?;
         ring_inner.init()?;
         let ring = Arc::new(UnsafeCell::new(ring_inner));
         Ok(Self(ring))
@@ -146,5 +148,28 @@ impl TxRing {
 
     pub fn send(&mut self, buff: &[u8]) -> Result<(), DError> {
         self.this_mut().send_packet(buff)
+    }
+
+    pub fn next_pkt(&mut self) -> Option<TxBuff<'_>> {
+        let ring = self.this_mut();
+        let next_tail = (ring.get_tx_tail() + 1) % ring.count() as u32;
+        if next_tail == ring.get_tx_head() {
+            return None; // 没有可用的包
+        }
+
+        Some(TxBuff { ring: self })
+    }
+}
+
+pub struct TxBuff<'a> {
+    ring: &'a mut TxRing,
+}
+
+impl TxBuff<'_> {
+    pub fn send(self, buff: &[u8]) -> Result<(), DError> {
+        if buff.len() > PACKET_SIZE as usize {
+            return Err(DError::InvalidParameter);
+        }
+        self.ring.send(buff)
     }
 }

@@ -5,28 +5,16 @@ use crate::{
     DError,
     descriptor::{AdvRxDesc, AdvRxDescRead},
 };
-use alloc::{sync::Arc, vec::Vec};
-use dma_api::DVec;
+use alloc::sync::Arc;
+use log::trace;
 
 struct RingInner {
     base: Ring<AdvRxDesc>,
-    pkts: Vec<DVec<u8>>,
-    pkt_size: usize,
 }
 
 impl RingInner {
-    fn new(ring: Ring<AdvRxDesc>, pkt_size: usize) -> Result<Self, DError> {
-        let mut pkts = Vec::with_capacity(ring.count());
-        for _ in 0..ring.count() {
-            pkts.push(
-                DVec::zeros(pkt_size, pkt_size, Direction::FromDevice).ok_or(DError::NoMemory)?,
-            );
-        }
-        Ok(Self {
-            base: ring,
-            pkts,
-            pkt_size,
-        })
+    fn new(ring: Ring<AdvRxDesc>) -> Result<Self, DError> {
+        Ok(Self { base: ring })
     }
 
     fn init(&mut self) -> Result<(), DError> {
@@ -189,8 +177,14 @@ unsafe impl Send for RxRing {}
 
 impl RxRing {
     pub(crate) fn new(idx: usize, mmio_base: NonNull<u8>, size: usize) -> Result<Self, DError> {
-        let base = Ring::new(idx, mmio_base, size)?;
-        let mut ring_inner = RingInner::new(base, PACKET_SIZE as usize)?;
+        let base = Ring::new(
+            idx,
+            mmio_base,
+            size,
+            PACKET_SIZE as usize,
+            Direction::FromDevice,
+        )?;
+        let mut ring_inner = RingInner::new(base)?;
         ring_inner.init()?;
         let ring = Arc::new(UnsafeCell::new(ring_inner));
         Ok(Self(ring))
@@ -211,19 +205,18 @@ impl RxRing {
         let ring = self.this_mut();
         let head = ring.get_head() as usize;
         let tail = ring.get_tail() as usize;
-
-        if head == tail {
+        trace!("RxRing: next_pkt head: {head}, tail: {tail}");
+        let index = (tail + 1) % ring.count();
+        if head == index {
             return None; // 没有可用的缓冲区
         }
 
-        // 获取当前索引
-        let index = head % ring.count();
-
         // 检查描述符是否已完成
         if !ring.is_descriptor_done(index) {
+            trace!("RxRing: next_pkt descriptor not done at index: {index}");
             return None; // 描述符未完成，无法获取数据
         }
-
+        trace!("RxRing: next_pkt index: {index}");
         // 返回 RxBuff 实例
         Some(RxBuff { ring: self, index })
     }

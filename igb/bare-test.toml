@@ -2,4 +2,4 @@
 machine = "virt"
 cpu = "cortex-a53"
 graphic = false
-args = "-netdev user,id=net0 -device igb,netdev=net0 -d trace:e1000*,trace:igb*,trace:net*"
+args = "-netdev user,id=net0 -device igb,netdev=net0 -d trace:e1000*,trace:igb*,trace:*net*"

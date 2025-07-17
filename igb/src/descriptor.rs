@@ -81,8 +81,8 @@ pub mod tx_desc_consts {
     pub const CMD_IDE: u32 = 1 << 31; // Interrupt Delay Enable
 
     // Descriptor types
-    pub const DTYPE_DATA: u32 = 0 << 20; // Data descriptor
-    pub const DTYPE_CONTEXT: u32 = 1 << 20; // Context descriptor
+    pub const DTYPE_DATA: u32 = 0b11 << 20; // Data descriptor
+    pub const DTYPE_CONTEXT: u32 = 0b10 << 20; // Context descriptor
 
     // Length mask
     pub const LEN_MASK: u32 = 0x000F_FFFF; // Packet Length [19:0]

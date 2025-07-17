@@ -2,7 +2,6 @@
 #![no_main]
 #![feature(used_with_arg)]
 
-use core::future::Future;
 use core::time::Duration;
 
 use bare_test::time::spin_delay;
@@ -28,10 +27,9 @@ mod tests {
         time::spin_delay,
     };
     use eth_igb::{Igb, RxBuff};
-    use log::{debug, info};
+    use log::*;
     use pcie::{CommandRegister, PciCapability, RootComplexGeneric, SimpleBarAllocator};
     use smoltcp::socket::icmp::{self, Socket as IcmpSocket};
-    use smoltcp::storage::PacketMetadata;
     use smoltcp::time::Instant;
     use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address};
     use smoltcp::{
@@ -42,6 +40,9 @@ mod tests {
         phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken},
         wire::{Icmpv4Packet, Icmpv4Repr},
     };
+
+    const IP: IpAddress = IpAddress::v4(10, 0, 2, 15);
+    const GATEWAY: Ipv4Address = Ipv4Address::new(10, 0, 2, 2);
 
     struct Driver<T>(UnsafeCell<T>);
     impl<T> Deref for Driver<T> {
@@ -118,6 +119,7 @@ mod tests {
         where
             F: FnOnce(&[u8]) -> R,
         {
+            debug!("rcv one");
             f(&self.buff)
         }
     }
@@ -133,9 +135,7 @@ mod tests {
         {
             let mut buffer = alloc::vec![0u8; len];
             let result = f(&mut buffer);
-            // 异步发送数据包
             self.tx_ring.send(&buffer).unwrap();
-
             result
         }
     }
@@ -194,10 +194,11 @@ mod tests {
         let mut iface = Interface::new(config, &mut device, now());
 
         // 配置 IP 地址
-        let ip_addr = IpCidr::new(IpAddress::v4(127, 0, 0, 1), 8);
+        let ip_addr = IpCidr::new(IP, 8);
         iface.update_ip_addrs(|ip_addrs| {
             ip_addrs.push(ip_addr).unwrap();
         });
+        iface.routes_mut().add_default_ipv4_route(GATEWAY).unwrap();
 
         // 创建 ICMP socket
         let icmp_rx_buffer = icmp::PacketBuffer::new(
@@ -238,7 +239,7 @@ mod tests {
         let mut ping_sent = false;
         let mut ping_received = false;
         let mut attempts = 0;
-        const MAX_ATTEMPTS: usize = 10;
+        const MAX_ATTEMPTS: usize = 1000;
         let ident = 0x22b;
 
         while attempts < MAX_ATTEMPTS && !ping_received {
@@ -263,6 +264,7 @@ mod tests {
 
                 // 发送 ping
                 icmp_repr.emit(&mut icmp_packet, &device.capabilities().checksum);
+                ping_sent = true;
             }
 
             if ping_sent && socket.can_recv() {
