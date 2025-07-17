@@ -15,6 +15,7 @@ trait-ffi = "0.1"
 [dev-dependencies]
 bare-test = "0.4"
 pcie = "0.3"
+smoltcp = {version = "0.12", default-features = false, features = ["alloc", "medium-ethernet", "proto-ipv4", "socket-icmp"]}
 spin_on = "0.1"
 
 [build-dependencies]

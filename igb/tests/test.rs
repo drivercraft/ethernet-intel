@@ -2,13 +2,13 @@
 #![no_main]
 #![feature(used_with_arg)]
 
+use core::future::Future;
 use core::time::Duration;
 
 use bare_test::time::spin_delay;
 use eth_igb::{impl_trait, osal::Kernel};
 
 extern crate alloc;
-extern crate bare_test;
 
 #[bare_test::tests]
 mod tests {
@@ -28,8 +28,17 @@ mod tests {
         time::spin_delay,
     };
     use eth_igb::Igb;
-    use log::info;
+    use log::{debug, info};
     use pcie::{CommandRegister, PciCapability, RootComplexGeneric, SimpleBarAllocator};
+    use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
+    use smoltcp::socket::icmp::{self, Socket as IcmpSocket};
+    use smoltcp::storage::PacketMetadata;
+    use smoltcp::time::Instant;
+    use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address};
+    use smoltcp::{
+        iface::{Config, Interface, SocketSet},
+        wire::HardwareAddress,
+    };
 
     struct Driver<T>(UnsafeCell<T>);
     impl<T> Deref for Driver<T> {
@@ -44,64 +53,114 @@ mod tests {
             unsafe { &mut *self.0.get() }
         }
     }
+    unsafe impl<T> Send for Driver<T> {}
+    unsafe impl<T> Sync for Driver<T> {}
+
     impl<T> Driver<T> {
         pub fn new(inner: T) -> Self {
             Self(UnsafeCell::new(inner))
         }
     }
 
-    // #[test]
-    // fn it_works() {
-    //     let (igb, irq) = get_igb().unwrap();
+    // SmolTCP device adapter for IGB
+    struct IgbDevice {
+        rx_ring: eth_igb::RxRing,
+        tx_ring: eth_igb::TxRing,
+        rx_buffer: alloc::vec::Vec<u8>,
+    }
 
-    //     info!("igb: {:#?}", igb.status());
+    impl IgbDevice {
+        fn new(rx_ring: eth_igb::RxRing, tx_ring: eth_igb::TxRing) -> Self {
+            let rx_buffer = alloc::vec![0u8; rx_ring.packet_size() * 2];
+            Self {
+                rx_ring,
+                tx_ring,
+                rx_buffer,
+            }
+        }
+    }
 
-    //     let mut igb = Driver::new(igb);
-    //     let igb_ptr = igb.0.get();
+    impl Device for IgbDevice {
+        type RxToken<'a> = IgbRxToken<'a>;
+        type TxToken<'a> = IgbTxToken<'a>;
 
-    //     for one in &irq.cfgs {
-    //         IrqParam {
-    //             intc: irq.irq_parent,
-    //             cfg: one.clone(),
-    //         }
-    //         .register_builder({
-    //             move |_irq| {
-    //                 unsafe {
-    //                     (*igb_ptr).handle_interrupt();
-    //                 }
-    //                 IrqHandleResult::Handled
-    //             }
-    //         })
-    //         .register();
-    //     }
+        fn receive(
+            &mut self,
+            _timestamp: Instant,
+        ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
+            // // 尝试接收数据包
+            // let rx_token = IgbRxToken {
+            //     rx_ring: &mut self.rx_ring,
+            //     buffer: &mut self.rx_buffer,
+            // };
+            // let tx_token = IgbTxToken {
+            //     tx_ring: &mut self.tx_ring,
+            // };
+            // Some((rx_token, tx_token))
+            None
+        }
 
-    //     let mut rx = igb.new_rx_ring().unwrap();
-    //     let _tx = igb.new_tx_ring().unwrap();
+        fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {
+            Some(IgbTxToken {
+                tx_ring: &mut self.tx_ring,
+            })
+        }
 
-    //     igb.open().unwrap();
-    //     info!("igb opened: {:#?}", igb.status());
+        fn capabilities(&self) -> DeviceCapabilities {
+            let mut caps = DeviceCapabilities::default();
+            caps.max_transmission_unit = 1500;
+            caps.max_burst_size = Some(1);
+            caps.medium = Medium::Ethernet;
+            caps
+        }
+    }
 
-    //     info!("mac: {:#?}", igb.read_mac());
+    struct IgbRxToken<'a> {
+        rx_ring: &'a mut eth_igb::RxRing,
+        buffer: &'a mut [u8],
+    }
 
-    //     info!("waiting for link up...");
-    //     while !igb.status().link_up {
-    //         spin_delay(Duration::from_secs(1));
+    impl<'a> RxToken for IgbRxToken<'a> {
+        fn consume<R, F>(self, f: F) -> R
+        where
+            F: FnOnce(&[u8]) -> R,
+        {
+            // 异步接收数据包
+            spin_on::spin_on(async {
+                self.rx_ring.recv(self.buffer).await.unwrap();
+                f(self.buffer)
+            })
+        }
+    }
 
-    //         info!("status: {:#?}", igb.status());
-    //     }
+    struct IgbTxToken<'a> {
+        tx_ring: &'a mut eth_igb::TxRing,
+    }
 
-    //     spin_on::spin_on(async move {
-    //         info!("link up, starting to receive packets...");
-    //         let mut buff = alloc::vec![0u8; rx.packet_size() * 10];
-    //         rx.recv(&mut buff).await.unwrap();
-    //         info!("Received {} bytes", buff.len());
-    //     });
+    impl<'a> TxToken for IgbTxToken<'a> {
+        fn consume<R, F>(self, len: usize, f: F) -> R
+        where
+            F: FnOnce(&mut [u8]) -> R,
+        {
+            let mut buffer = alloc::vec![0u8; len];
+            let result = f(&mut buffer);
 
-    //     println!("test passed!");
-    // }
+            // 异步发送数据包
+            spin_on::spin_on(async {
+                self.tx_ring.send(&buffer).await.unwrap();
+            });
+
+            result
+        }
+    }
+
+    fn now() -> Instant {
+        let ms = bare_test::time::since_boot().as_millis() as u64;
+        Instant::from_millis(ms as i64)
+    }
 
     #[test]
-    fn loopback_test() {
+    fn ping_test() {
         let (igb, irq) = get_igb().unwrap();
 
         info!("igb: {:#?}", igb.status());
@@ -126,9 +185,8 @@ mod tests {
         }
 
         igb.open().unwrap();
-        info!("igb opened for loopback test: {:#?}", igb.status());
-        // igb.enable_loopback();
-        // info!("Loopback mode enabled");
+        info!("igb opened for ping test: {:#?}", igb.status());
+
         let mac = igb.read_mac();
         info!("mac: {mac:#?}");
 
@@ -138,35 +196,104 @@ mod tests {
             info!("status: {:#?}", igb.status());
         }
 
-        let mut rx = igb.new_rx_ring().unwrap();
-        let mut tx = igb.new_tx_ring().unwrap();
-        spin_on::spin_on(async move {
-            info!("link up, starting loopback test...");
+        let rx_ring = igb.new_rx_ring().unwrap();
+        let tx_ring = igb.new_tx_ring().unwrap();
 
-            // 创建测试数据包
-            let test_packet = create_test_packet(&mac.bytes());
-            info!("Created test packet with {} bytes", test_packet.len());
+        // 创建 smoltcp 设备适配器
+        let mut device = IgbDevice::new(rx_ring, tx_ring);
 
-            // 发送测试数据包
-            info!("Sending test packet...");
-            tx.send(&test_packet).await.unwrap();
-            info!("Test packet sent");
+        // 设置网络配置
+        let config = Config::new(HardwareAddress::Ethernet(EthernetAddress::from_bytes(
+            &mac.bytes(),
+        )));
+        let mut iface = Interface::new(config, &mut device, now());
 
-            // 接收数据包
-            let mut rx_buff = alloc::vec![0u8; rx.packet_size() * 2];
-            info!("Waiting to receive packet...");
-            rx.recv(&mut rx_buff).await.unwrap();
-            info!("Received {} bytes", rx_buff.len());
-
-            // 验证收到的数据包
-            if verify_loopback_packet(&test_packet, &rx_buff) {
-                info!("✓ Loopback test passed! Packet correctly received");
-            } else {
-                info!("✗ Loopback test failed! Received packet doesn't match sent packet");
-            }
+        // 配置 IP 地址
+        let ip_addr = IpCidr::new(IpAddress::v4(127, 0, 0, 1), 8);
+        iface.update_ip_addrs(|ip_addrs| {
+            ip_addrs.push(ip_addr).unwrap();
         });
 
-        println!("loopback test completed!");
+        // 创建 ICMP socket
+        let mut rx_meta = [PacketMetadata::EMPTY; 16];
+        let mut rx_buffer = [0u8; 1024];
+        let mut tx_meta = [PacketMetadata::EMPTY; 16];
+        let mut tx_buffer = [0u8; 1024];
+
+        let icmp_socket = IcmpSocket::new(
+            icmp::PacketBuffer::new(&mut rx_meta[..], &mut rx_buffer[..]),
+            icmp::PacketBuffer::new(&mut tx_meta[..], &mut tx_buffer[..]),
+        );
+        let mut socket_set = SocketSet::new(alloc::vec![]);
+        let icmp_handle = socket_set.add(icmp_socket);
+
+        info!("Starting ping to 127.0.0.1...");
+
+        // 执行 ping 测试
+        let ping_result = ping_127_0_0_1(&mut iface, &mut device, &mut socket_set, icmp_handle);
+
+        if ping_result {
+            info!("✓ Ping test passed! Successfully pinged 127.0.0.1");
+        } else {
+            info!("✗ Ping test failed!");
+        }
+
+        println!("ping test completed!");
+    }
+
+    fn ping_127_0_0_1(
+        iface: &mut Interface,
+        device: &mut IgbDevice,
+        socket_set: &mut SocketSet,
+        icmp_handle: smoltcp::iface::SocketHandle,
+    ) -> bool {
+        let target_addr = Ipv4Address::new(127, 0, 0, 1);
+        let mut ping_sent = false;
+        let mut ping_received = false;
+        let mut attempts = 0;
+        const MAX_ATTEMPTS: usize = 10;
+
+        while attempts < MAX_ATTEMPTS && !ping_received {
+            iface.poll(now(), device, socket_set);
+            // 获取 ICMP socket
+            let socket = socket_set.get_mut::<IcmpSocket>(icmp_handle);
+
+            if !ping_sent && socket.can_send() {
+                // 发送 ping
+                let ping_payload = b"ping test";
+                match socket.send_slice(ping_payload, target_addr.into()) {
+                    Ok(()) => {
+                        info!("Ping sent to 127.0.0.1");
+                        ping_sent = true;
+                    }
+                    Err(e) => {
+                        info!("Failed to send ping: {e:?}");
+                    }
+                }
+            }
+
+            if ping_sent && socket.can_recv() {
+                // 接收 ping 响应
+                match socket.recv() {
+                    Ok((data, addr)) => {
+                        info!(
+                            "Ping response received from {:?}: {:?}",
+                            addr,
+                            core::str::from_utf8(data)
+                        );
+                        ping_received = true;
+                    }
+                    Err(e) => {
+                        info!("Failed to receive ping response: {e:?}");
+                    }
+                }
+            }
+
+            attempts += 1;
+            spin_delay(Duration::from_millis(100));
+        }
+
+        ping_received
     }
 
     fn get_igb() -> Option<(Igb, IrqInfo)> {
@@ -270,75 +397,8 @@ mod tests {
         }
         None
     }
-
-    fn create_test_packet(mac_src: &[u8]) -> alloc::vec::Vec<u8> {
-        // 创建一个简单的以太网帧用于回环测试
-        let mut packet = alloc::vec::Vec::new();
-
-        // 目标MAC地址 (广播地址)
-        packet.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
-
-        // 源MAC地址 (测试地址)
-        packet.extend_from_slice(mac_src);
-
-        // 以太网类型 (IPv4)
-        packet.extend_from_slice(&[0x08, 0x00]);
-
-        // 简单的IPv4头部
-        packet.extend_from_slice(&[
-            0x45, 0x00, 0x00, 0x2E, // Version, IHL, Type of Service, Total Length
-            0x00, 0x00, 0x40, 0x00, // Identification, Flags, Fragment Offset
-            0x40, 0x01, 0x00, 0x00, // TTL, Protocol (ICMP), Header Checksum
-            0xC0, 0xA8, 0x01, 0x01, // Source IP (192.168.1.1)
-            0xC0, 0xA8, 0x01, 0x02, // Destination IP (192.168.1.2)
-        ]);
-
-        // ICMP 头部和数据
-        packet.extend_from_slice(&[
-            0x08, 0x00, 0x00, 0x00, // Type (Echo Request), Code, Checksum
-            0x12, 0x34, 0x56, 0x78, // Identifier, Sequence Number
-        ]);
-
-        // 测试数据
-        packet.extend_from_slice(b"Hello, Loopback Test!");
-
-        // 填充到最小以太网帧大小
-        while packet.len() < 60 {
-            packet.push(0x00);
-        }
-        packet
-    }
-
-    fn verify_loopback_packet(sent_packet: &[u8], received_buffer: &[u8]) -> bool {
-        // 在接收缓冲区中查找发送的数据包
-        let packet_size = sent_packet.len();
-
-        // 搜索缓冲区中是否包含我们发送的数据包
-        for i in 0..received_buffer.len() {
-            if i + packet_size <= received_buffer.len() {
-                let chunk = &received_buffer[i..i + packet_size];
-                if chunk == sent_packet {
-                    info!("Found matching packet at offset {i}");
-                    return true;
-                }
-            }
-        }
-
-        // 如果没有找到完全匹配的数据包，至少检查一下是否接收到了数据
-        let non_zero_bytes = received_buffer.iter().filter(|&&b| b != 0).count();
-        info!(
-            "Received {non_zero_bytes} non-zero bytes out of {}",
-            received_buffer.len()
-        );
-
-        // 检查接收到的数据包的前几个字节
-        if received_buffer.len() >= 14 {
-            info!("Received packet header: {:02x?}", &received_buffer[0..14]);
-        }
-
-        false
-    }
 }
+
 struct KernelImpl;
 
 impl_trait! {

@@ -13,6 +13,8 @@ use crate::{
     osal::wait_for,
 };
 
+mod rx;
+
 pub const DEFAULT_RING_SIZE: usize = 256;
 const RDBAL: usize = 0xC000; // RX Descriptor Base Address Low
 const RDBAH: usize = 0xC004; // RX Descriptor Base Address High
@@ -93,19 +95,18 @@ register_bitfields! [
 
 #[derive(Default, Clone)]
 struct RingElemMeta{
-    // waker: AtomicWaker,
-    // is_done: bool,
     buff_ptr: usize,
 }
 
-pub struct Ring<D: Descriptor> {
+struct Ring<D: Descriptor> {
     pub descriptors: DVec<D>,
     ring_base: NonNull<u8>,
     current_head: usize,
-    ring_head: usize,
+    hw_head: usize,
     waker: AtomicWaker,
-    meta_ls: Vec<RingElemMeta>,
+    meta_ls: Vec<RingElemMeta>, 
 }
+
 
 impl<D: Descriptor> Ring<D> {
     pub fn new(idx: usize, mmio_base: NonNull<u8>, size: usize) -> Result<Self, DError> {
@@ -119,7 +120,7 @@ impl<D: Descriptor> Ring<D> {
             ring_base,
             waker: AtomicWaker::new(),
             current_head: 0,
-            ring_head: 0,
+            hw_head: 0,
             meta_ls: alloc::vec![RingElemMeta::default(); size],
         })
     }
@@ -153,128 +154,7 @@ impl<D: Descriptor> Ring<D> {
 }
 
 impl Ring<AdvRxDesc> {
-    pub fn init(&mut self) -> Result<(), DError> {
-        // Program the descriptor base address with the address of the region.
-        self.reg_write(RDBAL, (self.bus_addr() & 0xFFFFFFFF) as u32);
-        self.reg_write(RDBAH, (self.bus_addr() >> 32) as u32);
-
-        // Set the length register to the size of the descriptor ring.
-        self.reg_write(RDLEN, self.size_bytes() as u32);
-
-        // Program SRRCTL of the queue according to the size of the buffers and the required header handling.
-        self.reg_write(
-            SRRCTL,
-            (SRRCTL::DESCTYPE::AdvancedOneBuffer 
-                // 4kB 包大小
-                + SRRCTL::BSIZEPACKET.val(PACKET_SIZE_KB)).value,
-        );
-
-        // If header split or header replication is required for this queue,
-        // program the PSRTYPE register according to the required headers.
-        // 暂时不需要头部分割
-
-        self.reg_write(RDH, 0);
-        self.reg_write(RDT, 0);
-
-        // Enable the queue by setting RXDCTL.ENABLE. In the case of queue zero,
-        // the enable bit is set by default - so the ring parameters should be set before RCTL.RXEN is set.
-        // 使用推荐的阈值：PTHRESH=8, HTHRESH=8, WTHRESH=1
-        self.enable_queue();
-
-        // Poll the RXDCTL register until the ENABLE bit is set.
-        // The tail should not be bumped before this bit was read as one.
-
-        wait_for(
-            || self.reg_read(RXDCTL) & RXDCTL::ENABLE::Enabled.value > 0,
-            Duration::from_millis(1),
-            Some(1000),
-        )?;
-        
-        // Program the direction of packets to this queue according to the mode select in MRQC.
-        // Packets directed to a disabled queue is dropped.
-        // 暂时不配置 MRQC
-
-        // Note: The tail register of the queue (RDT[n]) should not be bumped until the queue is enabled.
-
-        Ok(())
-    }
-
-    pub fn enable_queue(&mut self) {
-        // 启用队列
-        self.reg_write(
-            RXDCTL,
-            (RXDCTL::PTHRESH.val(8)
-                + RXDCTL::HTHRESH.val(8)
-                + RXDCTL::WTHRESH.val(1)
-                + RXDCTL::ENABLE::Enabled)
-                .value,
-        );
-    }
-
-    pub fn disable_queue(&mut self) {
-        // 禁用队列
-        self.reg_write(
-            RXDCTL,
-            (RXDCTL::PTHRESH.val(8)
-                + RXDCTL::HTHRESH.val(8)
-                + RXDCTL::WTHRESH.val(1)
-                + RXDCTL::ENABLE::Disabled)
-                .value,
-        );
-    }
-
-    pub fn flush_descriptors(&mut self) {
-        // 触发描述符写回刷新
-        self.reg_write(
-            RXDCTL,
-            (RXDCTL::PTHRESH.val(8)
-                + RXDCTL::HTHRESH.val(8)
-                + RXDCTL::WTHRESH.val(1)
-                + RXDCTL::ENABLE::Enabled
-                + RXDCTL::SWFLUSH.val(1))
-            .value,
-        );
-    }
-
-    /// 检查描述符是否已完成(DD位)
-    ///
-    /// # 参数
-    /// - `desc_index`: 描述符索引
-    ///
-    /// # 返回
-    /// 如果描述符已完成则返回 true，否则返回 false
-    pub fn is_descriptor_done(&self, desc_index: usize) -> bool {
-        if desc_index >= self.descriptors.len() {
-            return false;
-        }
-
-        // 检查写回格式中的DD位
-        let desc = &self.descriptors[desc_index];
-        unsafe {
-            let wb = desc.write;
-            (wb.hi_dword.fields.error_type_status & crate::descriptor::rx_desc_consts::DD_BIT) != 0
-        }
-    }
-
-    /// 获取当前头部指针值
-    pub fn get_head(&self) -> u32 {
-        self.reg_read(RDH)
-    }
-
-    /// 获取当前尾部指针值
-    pub fn get_tail(&self) -> u32 {
-        self.reg_read(RDT)
-    }
-
-    /// 更新尾部指针
-    pub fn update_tail(&mut self) {
-        self.reg_write(RDT, self.current_head as u32);
-    }
-
-    pub fn clean(&mut self) {
-        // 清理环形缓冲区
-        self.ring_head = self.get_head() as usize;
-    }
+ 
 
     fn packet_buff(&mut self, index: usize) -> &mut [u8] {
         let ptr = self.meta_ls[index].buff_ptr;
@@ -296,6 +176,7 @@ impl Ring<AdvRxDesc> {
             sl.bus_addr()
         };
 
+        self.buffer.set(buff);
         let mut i = self.reg_read(RDT);
 
         let mut buff_left = buff;
@@ -311,87 +192,12 @@ impl Ring<AdvRxDesc> {
             bus_addr += PACKET_SIZE as u64;
             buff_left = &mut buff_left[PACKET_SIZE as usize..];
         }
+
         mb();
         self.reg_write(RDT, i);
 
         Ok(())
     }
-}
-
-pub struct RxRing(UnsafeCell<Box<Ring<AdvRxDesc>>>);
-
-impl RxRing{
-    pub(crate) fn new(ring: Ring<AdvRxDesc>) -> Self {
-        Self(UnsafeCell::new( Box::new(ring)))
-    }
-    
-    pub(crate) fn addr(&mut self) -> NonNull<Ring<AdvRxDesc>> {
-       unsafe{ NonNull::from( (*self.0.get()).as_mut())}
-    }
-
-    pub async fn recv(&mut self, buff: &mut [u8])->Result<(), DError> {
-        self.this_mut().rcv_buff(buff)?;
-        
-        RcvFuture::new(self, buff).await?;
-        
-            DSliceMut::from(buff, Direction::FromDevice)
-                .preper_read_all();
-        
-        Ok(())
-    }
-
-    fn this(&self) -> &Ring<AdvRxDesc> {
-        unsafe { &*self.0.get() }
-    }
-    fn this_mut(&mut self) -> &mut Ring<AdvRxDesc> {
-        unsafe { &mut *self.0.get() }
-    }
-
-    pub fn packet_size(&self) -> usize {
-        PACKET_SIZE as usize
-    }
-}
-
-pub struct RcvFuture<'a> {
-    ring: &'a mut RxRing,
-    buffer: &'a mut [u8],
-    n: usize,
-}
-
-impl<'a> RcvFuture<'a> {
-    pub fn new(ring: &'a mut RxRing, buffer: &'a mut [u8]) -> Self {
-        Self { ring, buffer, n: 0 }
-    }
-}
-
-impl <'a> Future for RcvFuture<'a> {
-    type Output = Result<(), DError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
-        let this = self.get_mut();
-        let ring = unsafe { &mut *this.ring.0.get() };
-
-        while this.n < this.buffer.len() && ring.current_head != ring.ring_head {
-            if !ring.is_descriptor_done(ring.current_head){
-                break;
-            }
-            ring.current_head += 1;
-            if ring.current_head >= ring.count() {
-                ring.current_head = 0;
-            }
-            this.n += PACKET_SIZE as usize;
-        }
-
-        if this.n == this.buffer.len() {
-            // 已经接收完所有数据
-            return core::task::Poll::Ready(Ok(()));
-        }
-        
-        // 没有可用的描述符，注册唤醒器
-        ring.waker.register(cx.waker());
-        core::task::Poll::Pending
-    }
-    
 }
 
 
@@ -470,7 +276,7 @@ impl Ring<AdvTxDesc> {
         if buff.len() > PACKET_SIZE as usize {
             return Err(DError::InvalidParameter);
         }
-
+        
         let tail = self.get_tx_tail() as usize;
         let next_tail = (tail + 1) % self.count();
         let head = self.get_tx_head() as usize;
@@ -532,7 +338,27 @@ impl TxRing {
     }
     
     pub async fn send(&mut self, buff: &[u8]) -> Result<(), DError> {
-        self.this_mut().send_packet(buff)
+        debug!("tx send {}", buff.len());
+        for chuck in buff.chunks(PACKET_SIZE as usize) {
+            self.this_mut().send_packet(chuck)?;
+        }
+        Ok(())
     }
 
+}
+
+
+#[derive(Default)]
+struct Buffer{
+    ptr: usize,
+    len: usize,
+    n: usize,
+}
+
+impl Buffer {
+    fn set(&mut self, buff: &[u8]) {
+        self.ptr = buff.as_ptr() as usize;
+        self.len = buff.len();
+        self.n = 0;
+    }
 }

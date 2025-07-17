@@ -9,7 +9,7 @@ pub use trait_ffi::impl_extern_trait;
 pub use crate::err::DError;
 use crate::{
     descriptor::{AdvRxDesc, AdvTxDesc},
-    ring::{DEFAULT_RING_SIZE, Ring, TxRing},
+    ring::{DEFAULT_RING_SIZE, Ring},
 };
 
 extern crate alloc;
@@ -23,7 +23,7 @@ mod phy;
 mod ring;
 
 pub use futures::{Stream, StreamExt};
-pub use ring::RxRing;
+pub use ring::{RxRing, TxRing};
 
 pub struct Igb {
     mac: mac::Mac,
