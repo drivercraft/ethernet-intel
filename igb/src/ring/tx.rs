@@ -114,6 +114,13 @@ impl RingInner {
         // 更新尾部指针
         self.reg_write(TDT, next_tail as u32);
 
+        // 等待硬件发送完成
+        wait_for(
+            || self.is_tx_descriptor_done(tail),
+            Duration::from_micros(100),
+            Some(1000), // 最多等待1000次检查，约100ms
+        )?;
+
         Ok(())
     }
 }

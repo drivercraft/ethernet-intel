@@ -36,8 +36,8 @@ const TDLEN: usize = 0xE008; // TX Descriptor Length
 const TDH: usize = 0xE010; // TX Descriptor Head
 const TDT: usize = 0xE018; // TX Descriptor Tail
 const TXDCTL: usize = 0xE028; // TX Descriptor Control
-const TDWBAL: usize = 0xE038; // TX Descriptor Write Back Address Low
-const TWDBAH: usize = 0xE03C; // TX Descriptor Write Back Address High
+// const TDWBAL: usize = 0xE038; // TX Descriptor Write Back Address Low
+// const TWDBAH: usize = 0xE03C; // TX Descriptor Write Back Address High
 
 const PACKET_SIZE_KB: u32 = 2;
 const PACKET_SIZE: u32 = PACKET_SIZE_KB * 1024;

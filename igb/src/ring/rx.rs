@@ -229,6 +229,13 @@ impl RxRing {
     }
 }
 
+impl Drop for RxRing {
+    fn drop(&mut self) {
+        // 在释放时禁用队列
+        self.this_mut().disable_queue();
+    }
+}
+
 pub struct RxBuff<'a> {
     ring: &'a mut RxRing,
     index: usize,
