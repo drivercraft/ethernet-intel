@@ -1,6 +1,6 @@
 #![no_std]
 
-use core::{cell::RefCell, ptr::NonNull};
+use core::ptr::NonNull;
 
 use log::debug;
 pub use mac::{MacAddr6, MacStatus};
@@ -8,7 +8,7 @@ pub use trait_ffi::impl_extern_trait;
 
 pub use crate::err::DError;
 use crate::{
-    descriptor::{AdvRxDesc, AdvTxDesc},
+    descriptor::AdvRxDesc,
     ring::{DEFAULT_RING_SIZE, Ring},
 };
 
@@ -22,45 +22,43 @@ mod descriptor;
 mod phy;
 mod ring;
 
+pub use futures::{Stream, StreamExt};
+pub use ring::RxRing;
+
 pub struct Igb {
-    mac: RefCell<mac::Mac>,
+    mac: mac::Mac,
     phy: phy::Phy,
-    tx_ring: Ring<AdvTxDesc>,
-    rx_ring: Ring<AdvRxDesc>,
+    rx_ring_addrs: [usize; 16],
 }
 
 impl Igb {
     pub fn new(iobase: NonNull<u8>) -> Result<Self, DError> {
-        let mac = RefCell::new(mac::Mac::new(iobase));
-        let phy = phy::Phy::new(mac.clone());
-
-        let tx_ring = Ring::new(0, iobase, DEFAULT_RING_SIZE)?;
-        let rx_ring = Ring::new(0, iobase, DEFAULT_RING_SIZE)?;
+        let mac = mac::Mac::new(iobase);
+        let phy = phy::Phy::new(mac);
 
         Ok(Self {
             mac,
             phy,
-            tx_ring,
-            rx_ring,
+            rx_ring_addrs: [0; 16],
         })
     }
 
     pub fn open(&mut self) -> Result<(), DError> {
-        self.mac.borrow_mut().disable_interrupts();
+        self.mac.disable_interrupts();
 
-        self.mac.borrow_mut().reset()?;
+        self.mac.reset()?;
 
-        self.mac.borrow_mut().disable_interrupts();
+        self.mac.disable_interrupts();
 
         debug!("reset done");
 
-        let link_mode = self.mac.borrow().link_mode().unwrap();
+        let link_mode = self.mac.link_mode().unwrap();
         debug!("link mode: {link_mode:?}");
         self.phy.power_up()?;
 
         self.setup_phy_and_the_link()?;
 
-        self.mac.borrow_mut().set_link_up();
+        self.mac.set_link_up();
 
         self.phy.wait_for_auto_negotiation_complete()?;
         debug!("Auto-negotiation complete");
@@ -68,12 +66,19 @@ impl Igb {
 
         self.init_stat();
 
-        self.init_rx()?;
-        self.init_tx();
+        self.mac.enable_interrupts();
 
-        self.mac.borrow_mut().enable_interrupts();
+        self.mac.enable_rx();
 
         Ok(())
+    }
+
+    pub fn new_rx_ring(&mut self) -> Result<RxRing, DError> {
+        let mut ring = Ring::new(0, self.mac.iobase(), DEFAULT_RING_SIZE)?;
+        ring.init()?;
+        let mut ring = RxRing::new(ring);
+        self.rx_ring_addrs[0] = ring.addr().as_ptr() as usize;
+        Ok(ring)
     }
 
     fn config_fc_after_link_up(&mut self) -> Result<(), DError> {
@@ -91,7 +96,7 @@ impl Igb {
     }
 
     pub fn read_mac(&self) -> MacAddr6 {
-        self.mac.borrow().read_mac().into()
+        self.mac.read_mac().into()
     }
 
     pub fn check_vid_did(vid: u16, did: u16) -> bool {
@@ -102,24 +107,11 @@ impl Igb {
     }
 
     pub fn status(&self) -> MacStatus {
-        self.mac.borrow().status()
+        self.mac.status()
     }
 
     fn init_stat(&mut self) {
         //TODO
-    }
-    /// 4.5.9 Receive Initialization
-    fn init_rx(&mut self) -> Result<(), DError> {
-        // disable rx when configing.
-        self.mac.borrow_mut().disable_rx();
-
-        // 初始化 ring
-        self.rx_ring.init()?;
-
-        // 最后启用 RX
-        self.mac.borrow_mut().enable_rx();
-
-        Ok(())
     }
 
     fn init_tx(&mut self) {
@@ -128,6 +120,18 @@ impl Igb {
         // self.tx_ring.init();
 
         // self.mac.borrow_mut().write_reg(TCTL::EN);
+    }
+
+    /// # Safety
+    /// This function should only be called from the interrupt handler.
+    /// It will handle the interrupt by acknowledging
+    pub unsafe fn handle_interrupt(&mut self) {
+        let msg = self.mac.interrupts_ack();
+        debug!("Interrupt message: {msg:?}");
+        if msg.queue_idx & 0x1 != 0 {
+            let rx_ring = unsafe { &mut *(self.rx_ring_addrs[0] as *mut Ring<AdvRxDesc>) };
+            rx_ring.clean();
+        }
     }
 }
 

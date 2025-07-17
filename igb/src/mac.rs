@@ -195,7 +195,37 @@ register_bitfields! [
         ],
     ],
 
+    // Extended Interrupt Cause Register - EICR (0x01580)
+    EICR [
+        // Non MSI-X mode (GPIE.Multiple_MSIX = 0)
+        RxTxQ OFFSET(0) NUMBITS(16)[],
+        Reserved1 OFFSET(16) NUMBITS(14)[],
+        TCP_Timer OFFSET(30) NUMBITS(1)[],
+        Other_Cause OFFSET(31) NUMBITS(1)[],
+    ],
 
+    // Extended Interrupt Cause Register - EICR MSI-X mode
+    EICR_MSIX [
+        // MSI-X mode (GPIE.Multiple_MSIX = 1)
+        MSIX OFFSET(0) NUMBITS(25)[],
+        Reserved OFFSET(25) NUMBITS(7)[],
+    ],
+
+    // Extended Interrupt Mask Set/Read - EIMS (0x01524)
+    EIMS [
+        // Non MSI-X mode (GPIE.Multiple_MSIX = 0)
+        RxTxQ OFFSET(0) NUMBITS(16)[],
+        Reserved1 OFFSET(16) NUMBITS(14)[],
+        TCP_Timer OFFSET(30) NUMBITS(1)[],
+        Other_Cause OFFSET(31) NUMBITS(1)[],
+    ],
+
+    // Extended Interrupt Mask Set/Read - EIMS MSI-X mode
+    EIMS_MSIX [
+        // MSI-X mode (GPIE.Multiple_MSIX = 1)
+        MSIX OFFSET(0) NUMBITS(25)[],
+        Reserved OFFSET(25) NUMBITS(7)[],
+    ],
 ];
 
 #[derive(Clone, Copy)]
@@ -206,6 +236,10 @@ pub struct Mac {
 impl Mac {
     pub fn new(iobase: NonNull<u8>) -> Self {
         Self { reg: iobase.cast() }
+    }
+
+    pub fn iobase<T>(&self) -> NonNull<T> {
+        self.reg.cast()
     }
 
     pub fn write_mdic(&self, phys_addr: u32, offset: u32, data: u16) -> Result<(), DError> {
@@ -250,12 +284,26 @@ impl Mac {
     }
 
     pub fn disable_interrupts(&mut self) {
-        self.reg_mut().eims.set(0);
+        self.reg_mut().eimc.set(u32::MAX);
         self.clear_interrupts();
     }
 
     pub fn enable_interrupts(&mut self) {
-        //TODO
+        self.reg_mut().eims.set(u32::MAX);
+    }
+
+    pub fn interrupts_ack(&mut self) -> IrqMsg {
+        let eicr = self.reg().eicr.get();
+        let eims = self.reg().eims.get();
+        let status = eicr & eims;
+        let tcp_timer = status & EICR::TCP_Timer.mask != 0;
+        let other = status & EICR::Other_Cause.mask != 0;
+        let queue_idx = (status & EICR::RxTxQ.mask) as u16;
+        IrqMsg {
+            queue_idx,
+            tcp_timer,
+            other,
+        }
     }
 
     pub fn link_mode(&self) -> Option<LinkMode> {
@@ -288,11 +336,7 @@ impl Mac {
     }
 
     pub fn set_link_up(&mut self) {
-        self.reg_mut().ctrl.modify(
-            CTRL::SLU::SET + CTRL::FD::SET, // + CTRL::SPEED::Speed1000
-                                            // + CTRL::FRCSPD::SET
-                                            // + CTRL::FRCDPLX::SET,
-        );
+        self.reg_mut().ctrl.modify(CTRL::SLU::SET + CTRL::FD::SET);
     }
 
     pub fn reg(&self) -> &MacRegister {
@@ -358,6 +402,13 @@ impl Mac {
             phy_reset_asserted,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct IrqMsg {
+    pub queue_idx: u16,
+    pub tcp_timer: bool,
+    pub other: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

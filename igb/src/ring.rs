@@ -1,7 +1,10 @@
-use core::{ptr::NonNull, time::Duration};
+use core::{cell::UnsafeCell, ops::Deref, pin::Pin, ptr::NonNull, time::Duration};
 
-use dma_api::{DVec, Direction};
+use alloc::{boxed::Box, vec::Vec};
+use dma_api::{DSlice, DSliceMut, DVec, Direction};
+use mbarrier::mb;
 use tock_registers::register_bitfields;
+use futures::{stream::Stream, task::AtomicWaker};
 
 use crate::{
     descriptor::{AdvRxDesc, AdvRxDescRead, Descriptor},
@@ -20,8 +23,8 @@ const RXDCTL: usize = 0xC028; // RX Descriptor Control
 // const RXCTL: usize = 0xC014; // RX Control
 // const RQDPC: usize = 0xC030; // RX Descriptor Polling Control
 
-const PACKET_SIZE_KB: u32 = 4; // 4KB packet size
-const PACKET_SIZE: u32 = PACKET_SIZE_KB * 1024; // 4KB in bytes
+const PACKET_SIZE_KB: u32 = 2;
+const PACKET_SIZE: u32 = PACKET_SIZE_KB * 1024; 
 
 register_bitfields! [
     // First parameter is the register width. Can be u8, u16, u32, or u64.
@@ -64,10 +67,20 @@ register_bitfields! [
     ]
 ];
 
+#[derive(Default, Clone)]
+struct RingElemMeta{
+    // waker: AtomicWaker,
+    // is_done: bool,
+    buff_ptr: usize,
+}
+
 pub struct Ring<D: Descriptor> {
     pub descriptors: DVec<D>,
-    packets: DVec<u8>,
     ring_base: NonNull<u8>,
+    current_head: usize,
+    ring_head: usize,
+    waker: AtomicWaker,
+    meta_ls: Vec<RingElemMeta>,
 }
 
 impl<D: Descriptor> Ring<D> {
@@ -76,13 +89,14 @@ impl<D: Descriptor> Ring<D> {
             DVec::zeros(size, 0x1000, Direction::Bidirectional).ok_or(DError::NoMemory)?;
 
         let ring_base = unsafe { mmio_base.add(idx * 0x40) };
-        let packets = DVec::zeros(size * PACKET_SIZE as usize, 0x1000, Direction::Bidirectional)
-            .ok_or(DError::NoMemory)?;
-
+ 
         Ok(Self {
             descriptors,
             ring_base,
-            packets,
+            waker: AtomicWaker::new(),
+            current_head: 0,
+            ring_head: 0,
+            meta_ls: alloc::vec![RingElemMeta::default(); size],
         })
     }
 
@@ -151,21 +165,12 @@ impl Ring<AdvRxDesc> {
             Duration::from_millis(1),
             Some(1000),
         )?;
-
-        for i in 0..self.count() {
-            let paddr = self.packets.bus_addr() + i as u64 * PACKET_SIZE as u64;
-            let read_desc =  AdvRxDescRead::new(paddr, 0, false);
-            self.descriptors.set(i, AdvRxDesc { read: read_desc });
-        }
-
+        
         // Program the direction of packets to this queue according to the mode select in MRQC.
         // Packets directed to a disabled queue is dropped.
         // 暂时不配置 MRQC
 
         // Note: The tail register of the queue (RDT[n]) should not be bumped until the queue is enabled.
-        // 队列启用后，更新尾指针
-        let ring_count = self.count() as u32;
-        self.reg_write(RDT, ring_count - 1);
 
         Ok(())
     }
@@ -238,7 +243,129 @@ impl Ring<AdvRxDesc> {
     }
 
     /// 更新尾部指针
-    pub fn update_tail(&mut self, tail: u32) {
-        self.reg_write(RDT, tail);
+    pub fn update_tail(&mut self) {
+        self.reg_write(RDT, self.current_head as u32);
     }
+
+    pub fn clean(&mut self) {
+        // 清理环形缓冲区
+        self.ring_head = self.get_head() as usize;
+    }
+
+    fn packet_buff(&mut self, index: usize) -> &mut [u8] {
+        let ptr = self.meta_ls[index].buff_ptr;
+        let buff = unsafe{
+            core::slice::from_raw_parts_mut(ptr as *mut u8, PACKET_SIZE as usize)
+        };
+        {
+            let sl = DSliceMut::from(buff, Direction::FromDevice);
+            sl.preper_read_all();
+        }
+        buff
+    }
+
+    fn rcv_buff(&mut self, buff: &mut [u8]) -> Result<(), DError> {
+        assert!(buff.len() >= PACKET_SIZE as usize, "Buffer too small for packet");
+        assert!(buff.len().is_multiple_of(PACKET_SIZE as usize), "Buffer size must be a multiple of packet size");
+        let mut bus_addr = {
+            let sl = DSliceMut::from(buff, Direction::FromDevice);
+            sl.bus_addr()
+        };
+
+        let mut i = self.reg_read(RDT);
+
+        let mut buff_left = buff;
+        while !buff_left.is_empty() {
+            let desc = AdvRxDesc{read: AdvRxDescRead { pkt_addr: bus_addr, hdr_addr: 0 }}; 
+            self.descriptors.set(i as usize, desc);
+            self.meta_ls[i as usize].buff_ptr = buff_left.as_mut_ptr() as usize;
+
+            i += 1;
+            if i >= self.count() as u32{
+                i = 0;
+            }
+            bus_addr += PACKET_SIZE as u64;
+            buff_left = &mut buff_left[PACKET_SIZE as usize..];
+        }
+        mb();
+        self.reg_write(RDT, i);
+
+        Ok(())
+    }
+}
+
+pub struct RxRing(UnsafeCell<Box<Ring<AdvRxDesc>>>);
+
+impl RxRing{
+    pub(crate) fn new(ring: Ring<AdvRxDesc>) -> Self {
+        Self(UnsafeCell::new( Box::new(ring)))
+    }
+    
+    pub(crate) fn addr(&mut self) -> NonNull<Ring<AdvRxDesc>> {
+       unsafe{ NonNull::from( (*self.0.get()).as_mut())}
+    }
+
+    pub async fn recv(&mut self, buff: &mut [u8])->Result<(), DError> {
+        self.this_mut().rcv_buff(buff)?;
+        
+        RcvFuture::new(self, buff).await?;
+        
+            DSliceMut::from(buff, Direction::FromDevice)
+                .preper_read_all();
+        
+        Ok(())
+    }
+
+    fn this(&self) -> &Ring<AdvRxDesc> {
+        unsafe { &*self.0.get() }
+    }
+    fn this_mut(&mut self) -> &mut Ring<AdvRxDesc> {
+        unsafe { &mut *self.0.get() }
+    }
+
+    pub fn packet_size(&self) -> usize {
+        PACKET_SIZE as usize
+    }
+}
+
+pub struct RcvFuture<'a> {
+    ring: &'a mut RxRing,
+    buffer: &'a mut [u8],
+    n: usize,
+}
+
+impl<'a> RcvFuture<'a> {
+    pub fn new(ring: &'a mut RxRing, buffer: &'a mut [u8]) -> Self {
+        Self { ring, buffer, n: 0 }
+    }
+}
+
+impl <'a> Future for RcvFuture<'a> {
+    type Output = Result<(), DError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+        let this = self.get_mut();
+        let ring = unsafe { &mut *this.ring.0.get() };
+
+        while this.n < this.buffer.len() && ring.current_head != ring.ring_head {
+            if !ring.is_descriptor_done(ring.current_head){
+                break;
+            }
+            ring.current_head += 1;
+            if ring.current_head >= ring.count() {
+                ring.current_head = 0;
+            }
+            this.n += PACKET_SIZE as usize;
+        }
+
+        if this.n == this.buffer.len() {
+            // 已经接收完所有数据
+            return core::task::Poll::Ready(Ok(()));
+        }
+        
+        // 没有可用的描述符，注册唤醒器
+        ring.waker.register(cx.waker());
+        core::task::Poll::Pending
+    }
+    
 }
