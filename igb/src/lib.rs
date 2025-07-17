@@ -1,13 +1,13 @@
 #![no_std]
 
-use core::{cell::RefCell, ptr::NonNull};
+use core::ptr::NonNull;
 
 use log::debug;
 pub use mac::{MacAddr6, MacStatus};
-use tock_registers::interfaces::*;
 pub use trait_ffi::impl_extern_trait;
 
 pub use crate::err::DError;
+use crate::{descriptor::AdvRxDesc, ring::DEFAULT_RING_SIZE};
 
 extern crate alloc;
 
@@ -15,36 +15,49 @@ mod err;
 mod mac;
 #[macro_use]
 pub mod osal;
+mod descriptor;
 mod phy;
+mod ring;
+
+pub use futures::{Stream, StreamExt};
+pub use ring::{RxBuff, RxRing, TxRing};
 
 pub struct Igb {
-    mac: RefCell<mac::Mac>,
+    mac: mac::Mac,
     phy: phy::Phy,
+    rx_ring_addrs: [usize; 16],
+    tx_ring_addrs: [usize; 16],
 }
 
 impl Igb {
-    pub fn new(iobase: NonNull<u8>) -> Self {
-        let mac = RefCell::new(mac::Mac::new(iobase));
-        let phy = phy::Phy::new(mac.clone());
-        Self { mac, phy }
+    pub fn new(iobase: NonNull<u8>) -> Result<Self, DError> {
+        let mac = mac::Mac::new(iobase);
+        let phy = phy::Phy::new(mac);
+
+        Ok(Self {
+            mac,
+            phy,
+            rx_ring_addrs: [0; 16],
+            tx_ring_addrs: [0; 16],
+        })
     }
 
     pub fn open(&mut self) -> Result<(), DError> {
-        self.mac.borrow_mut().disable_interrupts();
+        self.mac.disable_interrupts();
 
-        self.mac.borrow_mut().reset()?;
+        self.mac.reset()?;
 
-        self.mac.borrow_mut().disable_interrupts();
+        self.mac.disable_interrupts();
 
         debug!("reset done");
 
-        let link_mode = self.mac.borrow().link_mode().unwrap();
+        let link_mode = self.mac.link_mode().unwrap();
         debug!("link mode: {link_mode:?}");
         self.phy.power_up()?;
 
         self.setup_phy_and_the_link()?;
 
-        self.mac.borrow_mut().set_link_up();
+        self.mac.set_link_up();
 
         self.phy.wait_for_auto_negotiation_complete()?;
         debug!("Auto-negotiation complete");
@@ -52,12 +65,19 @@ impl Igb {
 
         self.init_stat();
 
-        self.init_rx();
-        self.init_tx();
+        self.mac.enable_interrupts();
 
-        self.mac.borrow_mut().enable_interrupts();
+        self.mac.enable_rx();
+        self.mac.enable_tx();
 
         Ok(())
+    }
+
+    pub fn new_ring(&mut self) -> Result<(TxRing, RxRing), DError> {
+        let tx_ring = TxRing::new(0, self.mac.iobase(), DEFAULT_RING_SIZE)?;
+        let rx_ring = RxRing::new(0, self.mac.iobase(), DEFAULT_RING_SIZE)?;
+
+        Ok((tx_ring, rx_ring))
     }
 
     fn config_fc_after_link_up(&mut self) -> Result<(), DError> {
@@ -75,7 +95,7 @@ impl Igb {
     }
 
     pub fn read_mac(&self) -> MacAddr6 {
-        self.mac.borrow().read_mac().into()
+        self.mac.read_mac().into()
     }
 
     pub fn check_vid_did(vid: u16, did: u16) -> bool {
@@ -86,33 +106,35 @@ impl Igb {
     }
 
     pub fn status(&self) -> MacStatus {
-        self.mac.borrow().status()
+        self.mac.status()
+    }
+
+    pub fn enable_loopback(&mut self) {
+        self.mac.enable_loopback();
+    }
+
+    pub fn disable_loopback(&mut self) {
+        self.mac.disable_loopback();
     }
 
     fn init_stat(&mut self) {
         //TODO
     }
-    /// 4.5.9 Receive Initialization
-    fn init_rx(&mut self) {
-        // disable rx when configing.
-        self.mac.borrow_mut().disable_rx();
 
-        // self.rx_ring.init();
-
-        // self.reg.write_reg(RCTL::RXEN | RCTL::SZ_4096);
-        self.mac
-            .borrow_mut()
-            .reg_mut()
-            .rctl
-            .modify(mac::RCTL::RXEN::Enabled);
+    /// # Safety
+    /// This function should only be called from the interrupt handler.
+    /// It will handle the interrupt by acknowledging
+    pub unsafe fn handle_interrupt(&mut self) {
+        let msg = self.mac.interrupts_ack();
+        debug!("Interrupt message: {msg:?}");
+        if msg.queue_idx & 0x1 != 0 {
+            // let rx_ring = unsafe { &mut *(self.rx_ring_addrs[0] as *mut Ring<AdvRxDesc>) };
+            // rx_ring.clean();
+        }
     }
 
-    fn init_tx(&mut self) {
-        // self.reg.write_reg(TCTL::empty());
-
-        // self.tx_ring.init();
-
-        // self.reg.write_reg(TCTL::EN);
+    pub fn irq_mode_legacy(&mut self) {
+        self.mac.configure_legacy_mode();
     }
 }
 

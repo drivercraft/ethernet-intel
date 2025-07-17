@@ -4,4 +4,8 @@ pub enum DError {
     Unknown(&'static str),
     #[error("Operation timed out")]
     Timeout,
+    #[error("No memory available")]
+    NoMemory,
+    #[error("Invalid parameter")]
+    InvalidParameter,
 }

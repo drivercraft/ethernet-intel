@@ -1,5 +1,3 @@
-use core::cell::RefCell;
-
 use log::debug;
 use tock_registers::register_bitfields;
 
@@ -248,21 +246,21 @@ register_bitfields! {
 }
 
 pub struct Phy {
-    mac: RefCell<Mac>,
+    mac: Mac,
     addr: u32,
 }
 
 impl Phy {
-    pub fn new(mac: RefCell<Mac>) -> Self {
+    pub fn new(mac: Mac) -> Self {
         Self { mac, addr: 1 }
     }
 
     pub fn read_mdic(&mut self, offset: u32) -> Result<u16, DError> {
-        self.mac.borrow_mut().read_mdic(self.addr, offset)
+        self.mac.read_mdic(self.addr, offset)
     }
 
     pub fn write_mdic(&mut self, offset: u32, data: u16) -> Result<(), DError> {
-        self.mac.borrow_mut().write_mdic(self.addr, offset, data)
+        self.mac.write_mdic(self.addr, offset, data)
     }
 
     // pub fn aquire_sync(&self, flags: SyncFlags) -> Result<Synced, DError> {
