@@ -169,7 +169,7 @@ mod tests {
             })
             .register();
         }
-
+        igb.irq_mode_legacy();
         igb.open().unwrap();
         info!("igb opened for ping test: {:#?}", igb.status());
 

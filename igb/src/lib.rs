@@ -132,6 +132,10 @@ impl Igb {
             // rx_ring.clean();
         }
     }
+
+    pub fn irq_mode_legacy(&mut self) {
+        self.mac.configure_legacy_mode();
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -16,10 +16,18 @@ register_structs! {
         (0x1c => _rsv3),
         (0x20 => mdic: ReadWrite<u32, MDIC::Register>),
         (0x24 => _rsv4),
+        (0xc0 => icr: ReadWrite<u32, ICR::Register>),
+        (0xc4 => _rsv13),
+        (0xd0 => ims: ReadWrite<u32, IMS::Register>),
+        (0xd4 => _rsv14),
+        (0xd8 => imc: ReadWrite<u32, IMC::Register>),
+        (0xdc => _rsv15),
         (0x100 => pub rctl: ReadWrite<u32, RCTL::Register>),
         (0x104 => _rsv7),
         (0x400 => tctl: ReadWrite<u32, TCTL::Register>),
         (0x404 => _rsv12),
+        (0x1514 => gpie: ReadWrite<u32, GPIE::Register>),
+        (0x1518 => _rsv16),
         (0x1524 => eims: ReadWrite<u32>),
         (0x1528 => eimc: ReadWrite<u32>),
         (0x152c => eiac: ReadWrite<u32>),
@@ -244,6 +252,94 @@ register_bitfields! [
         MSIX OFFSET(0) NUMBITS(25)[],
         Reserved OFFSET(25) NUMBITS(7)[],
     ],
+
+    // Legacy Interrupt Cause Register - ICR (0x000C0)
+    ICR [
+        TXDW OFFSET(0) NUMBITS(1)[],   // Transmit Descriptor Written Back
+        TXQE OFFSET(1) NUMBITS(1)[],   // Transmit Queue Empty
+        LSC OFFSET(2) NUMBITS(1)[],    // Link Status Change
+        RXSEQ OFFSET(3) NUMBITS(1)[],  // Receive Sequence Error
+        RXDMT0 OFFSET(4) NUMBITS(1)[], // Receive Descriptor Minimum Threshold Reached
+        RXO OFFSET(6) NUMBITS(1)[],    // Receiver Overrun
+        RXT0 OFFSET(7) NUMBITS(1)[],   // Receiver Timer Interrupt
+        MDAC OFFSET(9) NUMBITS(1)[],   // MDI/O Access Complete
+        RXCFG OFFSET(10) NUMBITS(1)[], // Receiving /C/ ordered sets
+        GPI_EN0 OFFSET(11) NUMBITS(1)[], // General Purpose Interrupt Enable 0
+        GPI_EN1 OFFSET(12) NUMBITS(1)[], // General Purpose Interrupt Enable 1
+        GPI_EN2 OFFSET(13) NUMBITS(1)[], // General Purpose Interrupt Enable 2
+        GPI_EN3 OFFSET(14) NUMBITS(1)[], // General Purpose Interrupt Enable 3
+        TXD_LOW OFFSET(15) NUMBITS(1)[], // Transmit Descriptor Low Threshold Hit
+        SRPD OFFSET(16) NUMBITS(1)[],  // Small Receive Packet Detected
+        ACK OFFSET(17) NUMBITS(1)[],   // Receive ACK Frame
+        MNG OFFSET(18) NUMBITS(1)[],   // Management Bus Interrupt
+        DOCK OFFSET(19) NUMBITS(1)[],  // Dock/Undock Status Change
+        INT_ASSERTED OFFSET(31) NUMBITS(1)[], // Interrupt Asserted
+    ],
+
+    // Legacy Interrupt Mask Set/Read - IMS (0x000D0)
+    IMS [
+        TXDW OFFSET(0) NUMBITS(1)[],   // Transmit Descriptor Written Back
+        TXQE OFFSET(1) NUMBITS(1)[],   // Transmit Queue Empty
+        LSC OFFSET(2) NUMBITS(1)[],    // Link Status Change
+        RXSEQ OFFSET(3) NUMBITS(1)[],  // Receive Sequence Error
+        RXDMT0 OFFSET(4) NUMBITS(1)[], // Receive Descriptor Minimum Threshold Reached
+        RXO OFFSET(6) NUMBITS(1)[],    // Receiver Overrun
+        RXT0 OFFSET(7) NUMBITS(1)[],   // Receiver Timer Interrupt
+        MDAC OFFSET(9) NUMBITS(1)[],   // MDI/O Access Complete
+        RXCFG OFFSET(10) NUMBITS(1)[], // Receiving /C/ ordered sets
+        GPI_EN0 OFFSET(11) NUMBITS(1)[], // General Purpose Interrupt Enable 0
+        GPI_EN1 OFFSET(12) NUMBITS(1)[], // General Purpose Interrupt Enable 1
+        GPI_EN2 OFFSET(13) NUMBITS(1)[], // General Purpose Interrupt Enable 2
+        GPI_EN3 OFFSET(14) NUMBITS(1)[], // General Purpose Interrupt Enable 3
+        TXD_LOW OFFSET(15) NUMBITS(1)[], // Transmit Descriptor Low Threshold Hit
+        SRPD OFFSET(16) NUMBITS(1)[],  // Small Receive Packet Detected
+        ACK OFFSET(17) NUMBITS(1)[],   // Receive ACK Frame
+        MNG OFFSET(18) NUMBITS(1)[],   // Management Bus Interrupt
+        DOCK OFFSET(19) NUMBITS(1)[],  // Dock/Undock Status Change
+    ],
+
+    // Legacy Interrupt Mask Clear - IMC (0x000D8)
+    IMC [
+        TXDW OFFSET(0) NUMBITS(1)[],   // Transmit Descriptor Written Back
+        TXQE OFFSET(1) NUMBITS(1)[],   // Transmit Queue Empty
+        LSC OFFSET(2) NUMBITS(1)[],    // Link Status Change
+        RXSEQ OFFSET(3) NUMBITS(1)[],  // Receive Sequence Error
+        RXDMT0 OFFSET(4) NUMBITS(1)[], // Receive Descriptor Minimum Threshold Reached
+        RXO OFFSET(6) NUMBITS(1)[],    // Receiver Overrun
+        RXT0 OFFSET(7) NUMBITS(1)[],   // Receiver Timer Interrupt
+        MDAC OFFSET(9) NUMBITS(1)[],   // MDI/O Access Complete
+        RXCFG OFFSET(10) NUMBITS(1)[], // Receiving /C/ ordered sets
+        GPI_EN0 OFFSET(11) NUMBITS(1)[], // General Purpose Interrupt Enable 0
+        GPI_EN1 OFFSET(12) NUMBITS(1)[], // General Purpose Interrupt Enable 1
+        GPI_EN2 OFFSET(13) NUMBITS(1)[], // General Purpose Interrupt Enable 2
+        GPI_EN3 OFFSET(14) NUMBITS(1)[], // General Purpose Interrupt Enable 3
+        TXD_LOW OFFSET(15) NUMBITS(1)[], // Transmit Descriptor Low Threshold Hit
+        SRPD OFFSET(16) NUMBITS(1)[],  // Small Receive Packet Detected
+        ACK OFFSET(17) NUMBITS(1)[],   // Receive ACK Frame
+        MNG OFFSET(18) NUMBITS(1)[],   // Management Bus Interrupt
+        DOCK OFFSET(19) NUMBITS(1)[],  // Dock/Undock Status Change
+    ],
+
+    // General Purpose Interrupt Enable - GPIE (0x1514)
+    GPIE [
+        NSICR OFFSET(0) NUMBITS(1)[
+            Normal = 0,
+            ClearOnRead = 1,
+        ],
+        Multiple_MSIX OFFSET(4) NUMBITS(1)[
+            SingleVector = 0,
+            MultipleVectors = 1,
+        ],
+        LL_Interval OFFSET(7) NUMBITS(5)[],  // Low Latency Credits Increment Rate (bits 11:7)
+        EIAME OFFSET(30) NUMBITS(1)[
+            Disabled = 0,
+            Enabled = 1,
+        ],
+        PBA_Support OFFSET(31) NUMBITS(1)[
+            Legacy = 0,
+            MSIX = 1,
+        ],
+    ],
 ];
 
 #[derive(Clone, Copy)]
@@ -308,6 +404,65 @@ impl Mac {
 
     pub fn enable_interrupts(&mut self) {
         self.reg_mut().eims.set(u32::MAX);
+    }
+
+    /// Enable legacy interrupts
+    pub fn enable_legacy_interrupts(&mut self) {
+        // Enable common legacy interrupts
+        self.reg_mut().ims.write(
+            IMS::TXDW::SET
+                + IMS::TXQE::SET
+                + IMS::LSC::SET
+                + IMS::RXDMT0::SET
+                + IMS::RXO::SET
+                + IMS::RXT0::SET
+                + IMS::MDAC::SET,
+        );
+    }
+
+    /// Disable legacy interrupts
+    pub fn disable_legacy_interrupts(&mut self) {
+        // Disable all legacy interrupts
+        self.reg_mut().imc.write(
+            IMC::TXDW::SET
+                + IMC::TXQE::SET
+                + IMC::LSC::SET
+                + IMC::RXSEQ::SET
+                + IMC::RXDMT0::SET
+                + IMC::RXO::SET
+                + IMC::RXT0::SET
+                + IMC::MDAC::SET
+                + IMC::RXCFG::SET
+                + IMC::GPI_EN0::SET
+                + IMC::GPI_EN1::SET
+                + IMC::GPI_EN2::SET
+                + IMC::GPI_EN3::SET
+                + IMC::TXD_LOW::SET
+                + IMC::SRPD::SET
+                + IMC::ACK::SET
+                + IMC::MNG::SET
+                + IMC::DOCK::SET,
+        );
+    }
+
+    /// Read and clear legacy interrupt cause
+    pub fn legacy_interrupts_ack(&mut self) -> LegacyIrqMsg {
+        let icr = self.reg().icr.get();
+        let ims = self.reg().ims.get();
+        let status = icr & ims;
+
+        LegacyIrqMsg {
+            txdw: status & ICR::TXDW.mask != 0,
+            txqe: status & ICR::TXQE.mask != 0,
+            lsc: status & ICR::LSC.mask != 0,
+            rxseq: status & ICR::RXSEQ.mask != 0,
+            rxdmt0: status & ICR::RXDMT0.mask != 0,
+            rxo: status & ICR::RXO.mask != 0,
+            rxt0: status & ICR::RXT0.mask != 0,
+            mdac: status & ICR::MDAC.mask != 0,
+            rxcfg: status & ICR::RXCFG.mask != 0,
+            asserted: status & ICR::INT_ASSERTED.mask != 0,
+        }
     }
 
     pub fn interrupts_ack(&mut self) -> IrqMsg {
@@ -398,6 +553,36 @@ impl Mac {
         self.reg_mut().rctl.modify(RCTL::LBM::Normal);
     }
 
+    /// Configure GPIE register for MSI-X mode
+    pub fn configure_msix_mode(&mut self) {
+        self.reg_mut().gpie.write(
+            GPIE::Multiple_MSIX::MultipleVectors + GPIE::EIAME::Enabled + GPIE::PBA_Support::MSIX,
+        );
+    }
+
+    /// Configure GPIE register for legacy/MSI mode
+    pub fn configure_legacy_mode(&mut self) {
+        self.reg_mut().gpie.write(
+            GPIE::Multiple_MSIX::SingleVector + GPIE::EIAME::Disabled + GPIE::PBA_Support::Legacy,
+        );
+    }
+
+    /// Set non-selective interrupt clear on read
+    pub fn set_nsicr(&mut self, enable: bool) {
+        if enable {
+            self.reg_mut().gpie.modify(GPIE::NSICR::ClearOnRead);
+        } else {
+            self.reg_mut().gpie.modify(GPIE::NSICR::Normal);
+        }
+    }
+
+    /// Set Low Latency Credits Increment Rate
+    pub fn set_ll_interval(&mut self, interval: u8) {
+        // interval is in 4μs increments, valid values 0-31
+        let val = (interval as u32) & 0x1F;
+        self.reg_mut().gpie.modify(GPIE::LL_Interval.val(val));
+    }
+
     fn ral(&self, i: usize) -> u32 {
         if i <= 15 {
             self.reg().ralh_0_15[i * 2].get()
@@ -439,6 +624,20 @@ pub struct IrqMsg {
     pub queue_idx: u16,
     pub tcp_timer: bool,
     pub other: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LegacyIrqMsg {
+    pub txdw: bool,     // Transmit Descriptor Written Back
+    pub txqe: bool,     // Transmit Queue Empty
+    pub lsc: bool,      // Link Status Change
+    pub rxseq: bool,    // Receive Sequence Error
+    pub rxdmt0: bool,   // Receive Descriptor Minimum Threshold Reached
+    pub rxo: bool,      // Receiver Overrun
+    pub rxt0: bool,     // Receiver Timer Interrupt
+    pub mdac: bool,     // MDI/O Access Complete
+    pub rxcfg: bool,    // Receiving /C/ ordered sets
+    pub asserted: bool, // Interrupt Asserted
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
