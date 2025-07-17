@@ -71,6 +71,7 @@ impl Igb {
         self.mac.enable_interrupts();
 
         self.mac.enable_rx();
+        self.mac.enable_tx();
 
         Ok(())
     }
@@ -120,16 +121,16 @@ impl Igb {
         self.mac.status()
     }
 
-    fn init_stat(&mut self) {
-        //TODO
+    pub fn enable_loopback(&mut self) {
+        self.mac.enable_loopback();
     }
 
-    fn init_tx(&mut self) {
-        // self.mac.borrow_mut().reg_mut().tctl.write(mac::TCTL::empty());
+    pub fn disable_loopback(&mut self) {
+        self.mac.disable_loopback();
+    }
 
-        // self.tx_ring.init();
-
-        // self.mac.borrow_mut().write_reg(TCTL::EN);
+    fn init_stat(&mut self) {
+        //TODO
     }
 
     /// # Safety

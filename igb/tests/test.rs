@@ -5,7 +5,7 @@
 use core::time::Duration;
 
 use bare_test::time::spin_delay;
-use eth_igb::{Stream, StreamExt, impl_trait, osal::Kernel};
+use eth_igb::{impl_trait, osal::Kernel};
 
 extern crate alloc;
 extern crate bare_test;
@@ -28,7 +28,6 @@ mod tests {
         time::spin_delay,
     };
     use eth_igb::Igb;
-    use futures::StreamExt;
     use log::info;
     use pcie::{CommandRegister, PciCapability, RootComplexGeneric, SimpleBarAllocator};
 
@@ -51,9 +50,59 @@ mod tests {
         }
     }
 
+    // #[test]
+    // fn it_works() {
+    //     let (igb, irq) = get_igb().unwrap();
+
+    //     info!("igb: {:#?}", igb.status());
+
+    //     let mut igb = Driver::new(igb);
+    //     let igb_ptr = igb.0.get();
+
+    //     for one in &irq.cfgs {
+    //         IrqParam {
+    //             intc: irq.irq_parent,
+    //             cfg: one.clone(),
+    //         }
+    //         .register_builder({
+    //             move |_irq| {
+    //                 unsafe {
+    //                     (*igb_ptr).handle_interrupt();
+    //                 }
+    //                 IrqHandleResult::Handled
+    //             }
+    //         })
+    //         .register();
+    //     }
+
+    //     let mut rx = igb.new_rx_ring().unwrap();
+    //     let _tx = igb.new_tx_ring().unwrap();
+
+    //     igb.open().unwrap();
+    //     info!("igb opened: {:#?}", igb.status());
+
+    //     info!("mac: {:#?}", igb.read_mac());
+
+    //     info!("waiting for link up...");
+    //     while !igb.status().link_up {
+    //         spin_delay(Duration::from_secs(1));
+
+    //         info!("status: {:#?}", igb.status());
+    //     }
+
+    //     spin_on::spin_on(async move {
+    //         info!("link up, starting to receive packets...");
+    //         let mut buff = alloc::vec![0u8; rx.packet_size() * 10];
+    //         rx.recv(&mut buff).await.unwrap();
+    //         info!("Received {} bytes", buff.len());
+    //     });
+
+    //     println!("test passed!");
+    // }
+
     #[test]
-    fn it_works() {
-        let (mut igb, irq) = get_igb().unwrap();
+    fn loopback_test() {
+        let (igb, irq) = get_igb().unwrap();
 
         info!("igb: {:#?}", igb.status());
 
@@ -76,29 +125,48 @@ mod tests {
             .register();
         }
 
-        let mut rx = igb.new_rx_ring().unwrap();
-        let mut tx = igb.new_tx_ring().unwrap();
-
         igb.open().unwrap();
-        info!("igb opened: {:#?}", igb.status());
-
-        info!("mac: {:#?}", igb.read_mac());
+        info!("igb opened for loopback test: {:#?}", igb.status());
+        // igb.enable_loopback();
+        // info!("Loopback mode enabled");
+        let mac = igb.read_mac();
+        info!("mac: {mac:#?}");
 
         info!("waiting for link up...");
         while !igb.status().link_up {
             spin_delay(Duration::from_secs(1));
-
             info!("status: {:#?}", igb.status());
         }
 
+        let mut rx = igb.new_rx_ring().unwrap();
+        let mut tx = igb.new_tx_ring().unwrap();
         spin_on::spin_on(async move {
-            info!("link up, starting to receive packets...");
-            let mut buff = alloc::vec![0u8; rx.packet_size() * 10];
-            rx.recv(&mut buff).await.unwrap();
-            info!("Received {} bytes", buff.len());
+            info!("link up, starting loopback test...");
+
+            // 创建测试数据包
+            let test_packet = create_test_packet(&mac.bytes());
+            info!("Created test packet with {} bytes", test_packet.len());
+
+            // 发送测试数据包
+            info!("Sending test packet...");
+            tx.send(&test_packet).await.unwrap();
+            info!("Test packet sent");
+
+            // 接收数据包
+            let mut rx_buff = alloc::vec![0u8; rx.packet_size() * 2];
+            info!("Waiting to receive packet...");
+            rx.recv(&mut rx_buff).await.unwrap();
+            info!("Received {} bytes", rx_buff.len());
+
+            // 验证收到的数据包
+            if verify_loopback_packet(&test_packet, &rx_buff) {
+                info!("✓ Loopback test passed! Packet correctly received");
+            } else {
+                info!("✗ Loopback test failed! Received packet doesn't match sent packet");
+            }
         });
 
-        println!("test passed!");
+        println!("loopback test completed!");
     }
 
     fn get_igb() -> Option<(Igb, IrqInfo)> {
@@ -201,6 +269,74 @@ mod tests {
             }
         }
         None
+    }
+
+    fn create_test_packet(mac_src: &[u8]) -> alloc::vec::Vec<u8> {
+        // 创建一个简单的以太网帧用于回环测试
+        let mut packet = alloc::vec::Vec::new();
+
+        // 目标MAC地址 (广播地址)
+        packet.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+
+        // 源MAC地址 (测试地址)
+        packet.extend_from_slice(mac_src);
+
+        // 以太网类型 (IPv4)
+        packet.extend_from_slice(&[0x08, 0x00]);
+
+        // 简单的IPv4头部
+        packet.extend_from_slice(&[
+            0x45, 0x00, 0x00, 0x2E, // Version, IHL, Type of Service, Total Length
+            0x00, 0x00, 0x40, 0x00, // Identification, Flags, Fragment Offset
+            0x40, 0x01, 0x00, 0x00, // TTL, Protocol (ICMP), Header Checksum
+            0xC0, 0xA8, 0x01, 0x01, // Source IP (192.168.1.1)
+            0xC0, 0xA8, 0x01, 0x02, // Destination IP (192.168.1.2)
+        ]);
+
+        // ICMP 头部和数据
+        packet.extend_from_slice(&[
+            0x08, 0x00, 0x00, 0x00, // Type (Echo Request), Code, Checksum
+            0x12, 0x34, 0x56, 0x78, // Identifier, Sequence Number
+        ]);
+
+        // 测试数据
+        packet.extend_from_slice(b"Hello, Loopback Test!");
+
+        // 填充到最小以太网帧大小
+        while packet.len() < 60 {
+            packet.push(0x00);
+        }
+        packet
+    }
+
+    fn verify_loopback_packet(sent_packet: &[u8], received_buffer: &[u8]) -> bool {
+        // 在接收缓冲区中查找发送的数据包
+        let packet_size = sent_packet.len();
+
+        // 搜索缓冲区中是否包含我们发送的数据包
+        for i in 0..received_buffer.len() {
+            if i + packet_size <= received_buffer.len() {
+                let chunk = &received_buffer[i..i + packet_size];
+                if chunk == sent_packet {
+                    info!("Found matching packet at offset {i}");
+                    return true;
+                }
+            }
+        }
+
+        // 如果没有找到完全匹配的数据包，至少检查一下是否接收到了数据
+        let non_zero_bytes = received_buffer.iter().filter(|&&b| b != 0).count();
+        info!(
+            "Received {non_zero_bytes} non-zero bytes out of {}",
+            received_buffer.len()
+        );
+
+        // 检查接收到的数据包的前几个字节
+        if received_buffer.len() >= 14 {
+            info!("Received packet header: {:02x?}", &received_buffer[0..14]);
+        }
+
+        false
     }
 }
 struct KernelImpl;

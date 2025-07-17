@@ -69,6 +69,28 @@ pub mod rx_desc_consts {
     pub const RXE_BIT: u32 = 1 << 11; // RX Error
 }
 
+// Advanced Transmit Descriptor constants
+pub mod tx_desc_consts {
+    // CMD_TYPE_LEN field bits
+    pub const CMD_EOP: u32 = 1 << 24; // End of Packet
+    pub const CMD_IFCS: u32 = 1 << 25; // Insert FCS
+    pub const CMD_IC: u32 = 1 << 26; // Insert Checksum
+    pub const CMD_RS: u32 = 1 << 27; // Report Status
+    pub const CMD_DEXT: u32 = 1 << 29; // Descriptor Extension
+    pub const CMD_VLE: u32 = 1 << 30; // VLAN Packet Enable
+    pub const CMD_IDE: u32 = 1 << 31; // Interrupt Delay Enable
+
+    // Descriptor types
+    pub const DTYPE_DATA: u32 = 0 << 20; // Data descriptor
+    pub const DTYPE_CONTEXT: u32 = 1 << 20; // Context descriptor
+
+    // Length mask
+    pub const LEN_MASK: u32 = 0x000F_FFFF; // Packet Length [19:0]
+
+    // Status bits in write-back format
+    pub const DD_BIT: u32 = 1 << 0; // Descriptor Done
+}
+
 /// RSS类型枚举
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]

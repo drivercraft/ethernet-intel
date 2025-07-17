@@ -18,7 +18,7 @@ register_structs! {
         (0x24 => _rsv4),
         (0x100 => pub rctl: ReadWrite<u32, RCTL::Register>),
         (0x104 => _rsv7),
-        (0x400 => tctl: ReadWrite<u32>),
+        (0x400 => tctl: ReadWrite<u32, TCTL::Register>),
         (0x404 => _rsv12),
         (0x1524 => eims: ReadWrite<u32>),
         (0x1528 => eimc: ReadWrite<u32>),
@@ -195,6 +195,24 @@ register_bitfields! [
         ],
     ],
 
+    // Transmit Control Register - TCTL (0x400)
+    TCTL [
+        EN OFFSET(1) NUMBITS(1)[
+            Disabled = 0,
+            Enabled = 1,
+        ],
+        PSP OFFSET(3) NUMBITS(1)[
+            Disabled = 0,
+            Enabled = 1,
+        ],
+        CT OFFSET(4) NUMBITS(8)[],
+        COLD OFFSET(12) NUMBITS(10)[],
+        SWXOFF OFFSET(22) NUMBITS(1)[],
+        RTLC OFFSET(24) NUMBITS(1)[],
+        NRTU OFFSET(25) NUMBITS(1)[],
+        MULR OFFSET(28) NUMBITS(1)[],
+    ],
+
     // Extended Interrupt Cause Register - EICR (0x01580)
     EICR [
         // Non MSI-X mode (GPIE.Multiple_MSIX = 0)
@@ -366,6 +384,18 @@ impl Mac {
 
     pub fn enable_rx(&mut self) {
         self.reg_mut().rctl.modify(RCTL::RXEN::Enabled);
+    }
+
+    pub fn enable_tx(&mut self) {
+        self.reg_mut().tctl.modify(TCTL::EN::Enabled);
+    }
+
+    pub fn enable_loopback(&mut self) {
+        self.reg_mut().rctl.modify(RCTL::LBM::MacLoopback);
+    }
+
+    pub fn disable_loopback(&mut self) {
+        self.reg_mut().rctl.modify(RCTL::LBM::Normal);
     }
 
     fn ral(&self, i: usize) -> u32 {
