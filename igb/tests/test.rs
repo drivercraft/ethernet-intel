@@ -27,10 +27,9 @@ mod tests {
         println,
         time::spin_delay,
     };
-    use eth_igb::Igb;
+    use eth_igb::{Igb, RxBuff};
     use log::{debug, info};
     use pcie::{CommandRegister, PciCapability, RootComplexGeneric, SimpleBarAllocator};
-    use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
     use smoltcp::socket::icmp::{self, Socket as IcmpSocket};
     use smoltcp::storage::PacketMetadata;
     use smoltcp::time::Instant;
@@ -38,6 +37,10 @@ mod tests {
     use smoltcp::{
         iface::{Config, Interface, SocketSet},
         wire::HardwareAddress,
+    };
+    use smoltcp::{
+        phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken},
+        wire::{Icmpv4Packet, Icmpv4Repr},
     };
 
     struct Driver<T>(UnsafeCell<T>);
@@ -66,17 +69,11 @@ mod tests {
     struct IgbDevice {
         rx_ring: eth_igb::RxRing,
         tx_ring: eth_igb::TxRing,
-        rx_buffer: alloc::vec::Vec<u8>,
     }
 
     impl IgbDevice {
         fn new(rx_ring: eth_igb::RxRing, tx_ring: eth_igb::TxRing) -> Self {
-            let rx_buffer = alloc::vec![0u8; rx_ring.packet_size() * 2];
-            Self {
-                rx_ring,
-                tx_ring,
-                rx_buffer,
-            }
+            Self { rx_ring, tx_ring }
         }
     }
 
@@ -88,16 +85,13 @@ mod tests {
             &mut self,
             _timestamp: Instant,
         ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
-            // // 尝试接收数据包
-            // let rx_token = IgbRxToken {
-            //     rx_ring: &mut self.rx_ring,
-            //     buffer: &mut self.rx_buffer,
-            // };
-            // let tx_token = IgbTxToken {
-            //     tx_ring: &mut self.tx_ring,
-            // };
-            // Some((rx_token, tx_token))
-            None
+            self.rx_ring.next_pkt().map(|buff| {
+                let rx_token = IgbRxToken { buff };
+                let tx_token = IgbTxToken {
+                    tx_ring: &mut self.tx_ring,
+                };
+                (rx_token, tx_token)
+            })
         }
 
         fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {
@@ -116,8 +110,7 @@ mod tests {
     }
 
     struct IgbRxToken<'a> {
-        rx_ring: &'a mut eth_igb::RxRing,
-        buffer: &'a mut [u8],
+        buff: RxBuff<'a>,
     }
 
     impl<'a> RxToken for IgbRxToken<'a> {
@@ -125,11 +118,7 @@ mod tests {
         where
             F: FnOnce(&[u8]) -> R,
         {
-            // 异步接收数据包
-            spin_on::spin_on(async {
-                self.rx_ring.recv(self.buffer).await.unwrap();
-                f(self.buffer)
-            })
+            f(&self.buff)
         }
     }
 
@@ -144,11 +133,8 @@ mod tests {
         {
             let mut buffer = alloc::vec![0u8; len];
             let result = f(&mut buffer);
-
             // 异步发送数据包
-            spin_on::spin_on(async {
-                self.tx_ring.send(&buffer).await.unwrap();
-            });
+            self.tx_ring.send(&buffer).unwrap();
 
             result
         }
@@ -196,8 +182,7 @@ mod tests {
             info!("status: {:#?}", igb.status());
         }
 
-        let rx_ring = igb.new_rx_ring().unwrap();
-        let tx_ring = igb.new_tx_ring().unwrap();
+        let (tx_ring, rx_ring) = igb.new_ring().unwrap();
 
         // 创建 smoltcp 设备适配器
         let mut device = IgbDevice::new(rx_ring, tx_ring);
@@ -215,15 +200,17 @@ mod tests {
         });
 
         // 创建 ICMP socket
-        let mut rx_meta = [PacketMetadata::EMPTY; 16];
-        let mut rx_buffer = [0u8; 1024];
-        let mut tx_meta = [PacketMetadata::EMPTY; 16];
-        let mut tx_buffer = [0u8; 1024];
-
-        let icmp_socket = IcmpSocket::new(
-            icmp::PacketBuffer::new(&mut rx_meta[..], &mut rx_buffer[..]),
-            icmp::PacketBuffer::new(&mut tx_meta[..], &mut tx_buffer[..]),
+        let icmp_rx_buffer = icmp::PacketBuffer::new(
+            alloc::vec![icmp::PacketMetadata::EMPTY],
+            alloc::vec![0; 256],
         );
+        let icmp_tx_buffer = icmp::PacketBuffer::new(
+            alloc::vec![icmp::PacketMetadata::EMPTY],
+            alloc::vec![0; 256],
+        );
+
+        let icmp_socket = icmp::Socket::new(icmp_rx_buffer, icmp_tx_buffer);
+
         let mut socket_set = SocketSet::new(alloc::vec![]);
         let icmp_handle = socket_set.add(icmp_socket);
 
@@ -252,24 +239,30 @@ mod tests {
         let mut ping_received = false;
         let mut attempts = 0;
         const MAX_ATTEMPTS: usize = 10;
+        let ident = 0x22b;
 
         while attempts < MAX_ATTEMPTS && !ping_received {
             iface.poll(now(), device, socket_set);
             // 获取 ICMP socket
             let socket = socket_set.get_mut::<IcmpSocket>(icmp_handle);
 
+            if !socket.is_open() {
+                socket.bind(icmp::Endpoint::Ident(ident)).unwrap();
+            }
+
             if !ping_sent && socket.can_send() {
+                let icmp_repr = Icmpv4Repr::EchoRequest {
+                    ident,
+                    seq_no: attempts as u16,
+                    data: b"ping test",
+                };
+                let icmp_payload = socket
+                    .send(icmp_repr.buffer_len(), target_addr.into())
+                    .unwrap();
+                let mut icmp_packet = Icmpv4Packet::new_unchecked(icmp_payload);
+
                 // 发送 ping
-                let ping_payload = b"ping test";
-                match socket.send_slice(ping_payload, target_addr.into()) {
-                    Ok(()) => {
-                        info!("Ping sent to 127.0.0.1");
-                        ping_sent = true;
-                    }
-                    Err(e) => {
-                        info!("Failed to send ping: {e:?}");
-                    }
-                }
+                icmp_repr.emit(&mut icmp_packet, &device.capabilities().checksum);
             }
 
             if ping_sent && socket.can_recv() {

@@ -7,10 +7,7 @@ pub use mac::{MacAddr6, MacStatus};
 pub use trait_ffi::impl_extern_trait;
 
 pub use crate::err::DError;
-use crate::{
-    descriptor::{AdvRxDesc, AdvTxDesc},
-    ring::{DEFAULT_RING_SIZE, Ring},
-};
+use crate::{descriptor::AdvRxDesc, ring::DEFAULT_RING_SIZE};
 
 extern crate alloc;
 
@@ -23,7 +20,7 @@ mod phy;
 mod ring;
 
 pub use futures::{Stream, StreamExt};
-pub use ring::{RxRing, TxRing};
+pub use ring::{RxBuff, RxRing, TxRing};
 
 pub struct Igb {
     mac: mac::Mac,
@@ -76,20 +73,11 @@ impl Igb {
         Ok(())
     }
 
-    pub fn new_rx_ring(&mut self) -> Result<RxRing, DError> {
-        let mut ring: Ring<AdvRxDesc> = Ring::new(0, self.mac.iobase(), DEFAULT_RING_SIZE)?;
-        ring.init()?;
-        let mut ring = RxRing::new(ring);
-        self.rx_ring_addrs[0] = ring.addr().as_ptr() as usize;
-        Ok(ring)
-    }
+    pub fn new_ring(&mut self) -> Result<(TxRing, RxRing), DError> {
+        let tx_ring = TxRing::new(0, self.mac.iobase(), DEFAULT_RING_SIZE)?;
+        let rx_ring = RxRing::new(0, self.mac.iobase(), DEFAULT_RING_SIZE)?;
 
-    pub fn new_tx_ring(&mut self) -> Result<TxRing, DError> {
-        let mut ring: Ring<AdvTxDesc> = Ring::new(0, self.mac.iobase(), DEFAULT_RING_SIZE)?;
-        ring.init()?;
-        let mut ring = TxRing::new(ring);
-        self.tx_ring_addrs[0] = ring.addr().as_ptr() as usize;
-        Ok(ring)
+        Ok((tx_ring, rx_ring))
     }
 
     fn config_fc_after_link_up(&mut self) -> Result<(), DError> {
@@ -140,8 +128,8 @@ impl Igb {
         let msg = self.mac.interrupts_ack();
         debug!("Interrupt message: {msg:?}");
         if msg.queue_idx & 0x1 != 0 {
-            let rx_ring = unsafe { &mut *(self.rx_ring_addrs[0] as *mut Ring<AdvRxDesc>) };
-            rx_ring.clean();
+            // let rx_ring = unsafe { &mut *(self.rx_ring_addrs[0] as *mut Ring<AdvRxDesc>) };
+            // rx_ring.clean();
         }
     }
 }

@@ -1,22 +1,32 @@
 use core::ops::{Deref, DerefMut};
 
+use super::*;
+use crate::{
+    DError,
+    descriptor::{AdvRxDesc, AdvRxDescRead},
+};
 use alloc::{sync::Arc, vec::Vec};
 use dma_api::DVec;
-use super::*;
-use crate::{descriptor::AdvRxDesc, DError};
 
 struct RingInner {
     base: Ring<AdvRxDesc>,
     pkts: Vec<DVec<u8>>,
+    pkt_size: usize,
 }
 
 impl RingInner {
-    fn new(ring: Ring<AdvRxDesc>, pkt_size: usize) -> Result< Self, DError> {
+    fn new(ring: Ring<AdvRxDesc>, pkt_size: usize) -> Result<Self, DError> {
         let mut pkts = Vec::with_capacity(ring.count());
         for _ in 0..ring.count() {
-            pkts.push(DVec::zeros(pkt_size, pkt_size, Direction::FromDevice).ok_or(DError::NoMemory)?);
+            pkts.push(
+                DVec::zeros(pkt_size, pkt_size, Direction::FromDevice).ok_or(DError::NoMemory)?,
+            );
         }
-        Ok( Self { base:ring, pkts })
+        Ok(Self {
+            base: ring,
+            pkts,
+            pkt_size,
+        })
     }
 
     fn init(&mut self) -> Result<(), DError> {
@@ -25,7 +35,12 @@ impl RingInner {
 
         for i in 0..self.descriptors.len() {
             let pkt_addr = self.pkts[i].bus_addr();
-            let desc = AdvRxDesc{read: AdvRxDescRead { pkt_addr, hdr_addr: 0 }};
+            let desc = AdvRxDesc {
+                read: AdvRxDescRead {
+                    pkt_addr,
+                    hdr_addr: 0,
+                },
+            };
             self.descriptors.set(i, desc);
         }
 
@@ -36,12 +51,12 @@ impl RingInner {
         // Set the length register to the size of the descriptor ring.
         self.reg_write(RDLEN, size_bytes as u32);
 
+        let pkt_size_kb = self.pkt_size / 1024;
+
         // Program SRRCTL of the queue according to the size of the buffers and the required header handling.
         self.reg_write(
             SRRCTL,
-            (SRRCTL::DESCTYPE::AdvancedOneBuffer 
-                // 4kB 包大小
-                + SRRCTL::BSIZEPACKET.val(PACKET_SIZE_KB)).value,
+            (SRRCTL::DESCTYPE::AdvancedOneBuffer + SRRCTL::BSIZEPACKET.val(pkt_size_kb as _)).value,
         );
 
         // If header split or header replication is required for this queue,
@@ -64,18 +79,17 @@ impl RingInner {
             Duration::from_millis(1),
             Some(1000),
         )?;
-        
+
         // Program the direction of packets to this queue according to the mode select in MRQC.
         // Packets directed to a disabled queue is dropped.
         // 暂时不配置 MRQC
 
         // Note: The tail register of the queue (RDT[n]) should not be bumped until the queue is enabled.
-
+        self.update_tail(self.descriptors.len() - 1);
         Ok(())
-
     }
 
-        pub fn enable_queue(&mut self) {
+    pub fn enable_queue(&mut self) {
         // 启用队列
         self.reg_write(
             RXDCTL,
@@ -128,7 +142,7 @@ impl RingInner {
         let desc = &self.descriptors[desc_index];
         unsafe {
             let wb = desc.write;
-            (wb.hi_dword.fields.error_type_status & crate::descriptor::rx_desc_consts::DD_BIT) != 0
+            wb.is_done()
         }
     }
 
@@ -143,8 +157,10 @@ impl RingInner {
     }
 
     /// 更新尾部指针
-    pub fn update_tail(&mut self) {
-        let tail = self.current_head;
+    pub fn update_tail(&mut self, mut tail: usize) {
+        if tail == self.descriptors.len() {
+            tail = 0;
+        }
         self.reg_write(RDT, tail as u32);
     }
 
@@ -171,77 +187,64 @@ pub struct RxRing(Arc<UnsafeCell<RingInner>>);
 
 unsafe impl Send for RxRing {}
 
-impl RxRing{
-    pub(crate) fn new(idx: usize, mmio_base: NonNull<u8>, size: usize) ->Result<Self, DError>  {
+impl RxRing {
+    pub(crate) fn new(idx: usize, mmio_base: NonNull<u8>, size: usize) -> Result<Self, DError> {
         let base = Ring::new(idx, mmio_base, size)?;
-        let ring_inner = RingInner::new(base, PACKET_SIZE as usize)?;
+        let mut ring_inner = RingInner::new(base, PACKET_SIZE as usize)?;
+        ring_inner.init()?;
         let ring = Arc::new(UnsafeCell::new(ring_inner));
         Ok(Self(ring))
     }
-    
-    pub(crate) fn addr(&mut self) -> NonNull<Ring<AdvRxDesc>> {
-       unsafe{ NonNull::from( (*self.0.get()).as_mut())}
-    }
 
-    pub async fn recv(&mut self, buff: &mut [u8])->Result<(), DError> {
-        self.this_mut().rcv_buff(buff)?;
-        
-        RcvFuture::new(self).await?;
-        
-            DSliceMut::from(buff, Direction::FromDevice)
-                .preper_read_all();
-        
-        Ok(())
-    }
-
-    fn this(&self) -> &Ring<AdvRxDesc> {
+    fn this(&self) -> &RingInner {
         unsafe { &*self.0.get() }
     }
-    fn this_mut(&mut self) -> &mut Ring<AdvRxDesc> {
+    fn this_mut(&mut self) -> &mut RingInner {
         unsafe { &mut *self.0.get() }
     }
 
     pub fn packet_size(&self) -> usize {
-        PACKET_SIZE as usize
+        self.this().pkt_size
+    }
+
+    pub fn next_pkt(&mut self) -> Option<RxBuff<'_>> {
+        let ring = self.this_mut();
+        let head = ring.get_head() as usize;
+        let tail = ring.get_tail() as usize;
+
+        if head == tail {
+            return None; // 没有可用的缓冲区
+        }
+
+        // 获取当前索引
+        let index = head % ring.count();
+
+        // 检查描述符是否已完成
+        if !ring.is_descriptor_done(index) {
+            return None; // 描述符未完成，无法获取数据
+        }
+
+        // 返回 RxBuff 实例
+        Some(RxBuff { ring: self, index })
     }
 }
 
-pub struct RcvFuture<'a> {
+pub struct RxBuff<'a> {
     ring: &'a mut RxRing,
+    index: usize,
 }
 
-impl<'a> RcvFuture<'a> {
-    pub fn new(ring: &'a mut RxRing) -> Self {
-        Self { ring }
+impl Deref for RxBuff<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.ring.this().pkts[self.index].deref()
     }
 }
 
-impl <'a> Future for RcvFuture<'a> {
-    type Output = Result<(), DError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
-        let this = self.get_mut();
-        let ring = unsafe { &mut *this.ring.0.get() };
-
-        while this.n < this.buffer.len() && ring.current_head != ring.hw_head {
-            if !ring.is_descriptor_done(ring.current_head){
-                break;
-            }
-            ring.current_head += 1;
-            if ring.current_head >= ring.count() {
-                ring.current_head = 0;
-            }
-            this.n += PACKET_SIZE as usize;
-        }
-
-        if this.n == this.buffer.len() {
-            // 已经接收完所有数据
-            return core::task::Poll::Ready(Ok(()));
-        }
-        
-        // 没有可用的描述符，注册唤醒器
-        ring.waker.register(cx.waker());
-        core::task::Poll::Pending
+impl Drop for RxBuff<'_> {
+    fn drop(&mut self) {
+        // 在释放时更新尾部指针
+        self.ring.this_mut().update_tail(self.index);
     }
 }
-
