@@ -2,18 +2,18 @@
 
 [![Test CI](https://github.com/drivercraft/ethernet-intel/actions/workflows/ci.yml/badge.svg)](https://github.com/drivercraft/ethernet-intel/actions/workflows/ci.yml)
 
-## 运行测试
+## Running Tests
 
-安装 `ostool`
+Install `ostool`:
 
 ```bash
 cargo install ostool
 ```
 
-运行测试
+Run tests:
 
 ```bash
 cargo test --test test -- tests --show-output
-# 带uboot的开发板测试
+# Testing with U-Boot development board
 cargo test --test test -- tests --show-output --uboot 
 ```

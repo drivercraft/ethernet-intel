@@ -1,5 +1,9 @@
 [package]
+authors = ["周睿 <zrufo747@outlook.com>"]
+categories = ["embedded", "no-std"]
 edition = "2024"
+keywords = ["os", "driver", "ethernet", "intel"]
+license = "MIT"
 name = "eth-igb"
 version = "0.1.0"
 
