@@ -1,6 +1,8 @@
 use alloc::sync::Arc;
 use log::trace;
 
+use crate::descriptor::{TxAdvDescCmd, TxAdvDescType};
+
 use super::*;
 
 type RingInner = Ring<AdvTxDesc>;
@@ -80,7 +82,17 @@ impl RingInner {
         let buffer_addr = self.pkts[next_tail].bus_addr();
 
         // 设置描述符
-        let desc = AdvTxDesc::new(buffer_addr, buff.len());
+        let desc = AdvTxDesc::new(
+            buffer_addr,
+            buff.len(),
+            TxAdvDescType::Data,
+            &[
+                TxAdvDescCmd::EOP,
+                TxAdvDescCmd::RS,
+                TxAdvDescCmd::IFCS,
+                TxAdvDescCmd::DEXT,
+            ],
+        );
 
         self.descriptors.set(tail, desc);
 

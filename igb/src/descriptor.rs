@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use tock_registers::register_bitfields;
 
 pub trait Descriptor {}
@@ -97,6 +99,23 @@ register_bitfields! [
     ],
 ];
 
+#[derive(Debug, Clone, Copy)]
+pub enum TxAdvDescType {
+    Data,
+    Context,
+}
+
+#[allow(clippy::upper_case_acronyms)]
+pub enum TxAdvDescCmd {
+    EOP,
+    IFCS,
+    IC,
+    RS,
+    DEXT,
+    VLE,
+    IDE,
+}
+
 /// RSS类型枚举
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -163,13 +182,33 @@ impl Descriptor for AdvTxDesc {}
 
 impl AdvTxDesc {
     /// 创建新的发送描述符
-    pub fn new(buffer_addr: u64, buffer_len: usize) -> Self {
-        let cmd_type_len = TX_DESC_CMD_TYPE_LEN::CMD_EOP::SET
-            + TX_DESC_CMD_TYPE_LEN::CMD_IFCS::SET
-            + TX_DESC_CMD_TYPE_LEN::CMD_RS::SET
-            + TX_DESC_CMD_TYPE_LEN::CMD_DEXT::SET
-            + TX_DESC_CMD_TYPE_LEN::DTYPE::Data
-            + TX_DESC_CMD_TYPE_LEN::LEN.val(buffer_len as _);
+    pub fn new(
+        buffer_addr: u64,
+        buffer_len: usize,
+        kind: TxAdvDescType,
+        cmd_ls: &[TxAdvDescCmd],
+    ) -> Self {
+        let mut cmd_type_len = TX_DESC_CMD_TYPE_LEN::LEN.val(buffer_len as _);
+        match kind {
+            TxAdvDescType::Data => {
+                cmd_type_len += TX_DESC_CMD_TYPE_LEN::DTYPE::Data;
+            }
+            TxAdvDescType::Context => {
+                cmd_type_len += TX_DESC_CMD_TYPE_LEN::DTYPE::Context;
+            }
+        }
+
+        for c in cmd_ls {
+            match c {
+                TxAdvDescCmd::EOP => cmd_type_len += TX_DESC_CMD_TYPE_LEN::CMD_EOP::SET,
+                TxAdvDescCmd::IFCS => cmd_type_len += TX_DESC_CMD_TYPE_LEN::CMD_IFCS::SET,
+                TxAdvDescCmd::IC => cmd_type_len += TX_DESC_CMD_TYPE_LEN::CMD_IC::SET,
+                TxAdvDescCmd::RS => cmd_type_len += TX_DESC_CMD_TYPE_LEN::CMD_RS::SET,
+                TxAdvDescCmd::DEXT => cmd_type_len += TX_DESC_CMD_TYPE_LEN::CMD_DEXT::SET,
+                TxAdvDescCmd::VLE => cmd_type_len += TX_DESC_CMD_TYPE_LEN::CMD_VLE::SET,
+                TxAdvDescCmd::IDE => cmd_type_len += TX_DESC_CMD_TYPE_LEN::CMD_IDE::SET,
+            }
+        }
 
         Self {
             read: AdvTxDescRead {
@@ -200,7 +239,7 @@ pub struct AdvTxDescWB {
 impl AdvTxDescWB {
     /// 检查描述符是否已完成 (DD bit)
     pub fn is_done(&self) -> bool {
-        unsafe { self.status & TX_DESC_STATUS::DD.mask != 0 }
+        self.status & TX_DESC_STATUS::DD.mask != 0
     }
 }
 

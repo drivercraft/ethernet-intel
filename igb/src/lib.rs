@@ -7,7 +7,7 @@ pub use mac::{MacAddr6, MacStatus};
 pub use trait_ffi::impl_extern_trait;
 
 pub use crate::err::DError;
-use crate::{descriptor::AdvRxDesc, ring::DEFAULT_RING_SIZE};
+use crate::ring::DEFAULT_RING_SIZE;
 
 extern crate alloc;
 
@@ -25,8 +25,8 @@ pub use ring::{RxBuff, RxRing, TxRing};
 pub struct Igb {
     mac: mac::Mac,
     phy: phy::Phy,
-    rx_ring_addrs: [usize; 16],
-    tx_ring_addrs: [usize; 16],
+    _rx_ring_addrs: [usize; 16],
+    _tx_ring_addrs: [usize; 16],
 }
 
 impl Igb {
@@ -37,8 +37,8 @@ impl Igb {
         Ok(Self {
             mac,
             phy,
-            rx_ring_addrs: [0; 16],
-            tx_ring_addrs: [0; 16],
+            _rx_ring_addrs: [0; 16],
+            _tx_ring_addrs: [0; 16],
         })
     }
 
