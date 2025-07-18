@@ -21,14 +21,6 @@ impl RingInner {
         let bus_addr = self.bus_addr();
         let size_bytes = self.size_bytes();
 
-        for i in 0..self.descriptors.len() {
-            let pkt_addr = self.pkts[i].bus_addr();
-            let desc = AdvRxDesc {
-                read: AdvRxDescRead::new(pkt_addr, 0, false),
-            };
-            self.descriptors.set(i, desc);
-        }
-
         // Program the descriptor base address with the address of the region.
         self.reg_write(RDBAL, (bus_addr & 0xFFFFFFFF) as u32);
         self.reg_write(RDBAH, (bus_addr >> 32) as u32);
@@ -155,7 +147,6 @@ impl RxRing {
             mmio_base,
             size,
             PACKET_SIZE as usize,
-            Direction::FromDevice,
         )?;
         let mut ring_inner = RingInner::new(base)?;
         ring_inner.init()?;
@@ -176,20 +167,26 @@ impl RxRing {
 
     pub fn next_pkt(&mut self) -> Option<RxPacket<'_>> {
         let index = self.next_index();
-        let ring = self.this_mut();
-        let head = ring.get_head() as usize;
+        let head = self.this().get_head() as usize;
         if head == index {
             return None; // 没有可用的缓冲区
         }
-        let desc = &ring.descriptors[index];
-        // 检查描述符是否已完成
-        if !unsafe { desc.write.is_done() } {
-            trace!("RxRing: next_pkt descriptor not done at index: {index}");
-            return None; // 描述符未完成，无法获取数据
+        let len;
+        unsafe {
+            let desc = &self.this().descriptors[index];
+            // 检查描述符是否已完成
+            if !desc.write.is_done() {
+                trace!("RxRing: next_pkt descriptor not done at index: {index}");
+                return None; // 描述符未完成，无法获取数据
+            }
+            len = desc.write.packet_length() as usize;
         }
+
         trace!("RxRing: next_pkt index: {index}");
-        let request = ring.meta_ls[index].request;
-        let len = unsafe { desc.write.packet_length() as usize };
+        let request = self.this_mut().meta_ls[index]
+            .request
+            .take()
+            .expect("Request should be set");
 
         Some(RxPacket {
             ring: self,
@@ -208,10 +205,10 @@ impl RxRing {
 
         // 更新描述符
         let desc = AdvRxDesc {
-            read: AdvRxDescRead::new(request.buff_bus_addr, 0, false),
+            read: AdvRxDescRead::new(request.bus_addr(), 0, false),
         };
         ring.descriptors.set(index, desc);
-        ring.meta_ls[index].request = request;
+        ring.meta_ls[index].request = Some(request);
 
         // 更新尾部指针
         ring.update_tail(index + 1);

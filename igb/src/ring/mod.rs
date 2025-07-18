@@ -97,9 +97,9 @@ register_bitfields! [
 
 ];
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 struct RingElemMeta {
-    request: Request,
+    request: Option<Request>,
 }
 
 struct Ring<D: Descriptor> {
@@ -107,7 +107,6 @@ struct Ring<D: Descriptor> {
     ring_base: NonNull<u8>,
     _waker: AtomicWaker,
     meta_ls: Vec<RingElemMeta>,
-    pkts: Vec<DVec<u8>>,
     pkt_size: usize,
 }
 
@@ -117,23 +116,22 @@ impl<D: Descriptor> Ring<D> {
         mmio_base: NonNull<u8>,
         size: usize,
         pkt_size: usize,
-        dir: Direction,
     ) -> Result<Self, DError> {
         let descriptors =
             DVec::zeros(size, 0x1000, Direction::Bidirectional).ok_or(DError::NoMemory)?;
 
         let ring_base = unsafe { mmio_base.add(idx * 0x40) };
-        let mut pkts = Vec::with_capacity(size);
+
+        let mut meta_ls = Vec::with_capacity(size);
         for _ in 0..size {
-            pkts.push(DVec::zeros(pkt_size, pkt_size, dir).ok_or(DError::NoMemory)?);
+            meta_ls.push(RingElemMeta::default());
         }
 
         Ok(Self {
             descriptors,
             ring_base,
             _waker: AtomicWaker::new(),
-            meta_ls: alloc::vec![RingElemMeta::default(); size],
-            pkts,
+            meta_ls,
             pkt_size,
         })
     }

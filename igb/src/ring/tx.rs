@@ -1,24 +1,48 @@
+use core::ops::{Deref, DerefMut};
+
 use alloc::sync::Arc;
 use log::trace;
 
 use crate::descriptor::{TxAdvDescCmd, TxAdvDescType};
 
 use super::*;
+struct RingInner {
+    base: Ring<AdvTxDesc>,
+    finished: usize,
+}
 
-type RingInner = Ring<AdvTxDesc>;
+impl Deref for RingInner {
+    type Target = super::Ring<AdvTxDesc>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base
+    }
+}
+
+impl DerefMut for RingInner {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.base
+    }
+}
 
 impl RingInner {
+    fn new(base: Ring<AdvTxDesc>) -> Self {
+        Self { base, finished: 0 }
+    }
+
     pub fn init(&mut self) -> Result<(), DError> {
         debug!("init tx");
         // Step 1: Allocate a region of memory for the transmit descriptor list
         // (Already done in Ring::new())
+        let bus_addr = self.base.bus_addr();
 
         // Step 2: Program the descriptor base address with the address of the region
-        self.reg_write(TDBAL, (self.bus_addr() & 0xFFFFFFFF) as u32);
-        self.reg_write(TDBAH, (self.bus_addr() >> 32) as u32);
+        self.reg_write(TDBAL, (bus_addr & 0xFFFFFFFF) as u32);
+        self.reg_write(TDBAH, (bus_addr >> 32) as u32);
 
         // Step 3: Set the length register to the size of the descriptor ring
-        self.reg_write(TDLEN, self.size_bytes() as u32);
+        let size_bytes = self.base.size_bytes();
+        self.reg_write(TDLEN, size_bytes as u32);
 
         // Step 4: Program the TXDCTL register with the desired TX descriptor write back policy
         // Suggested values: WTHRESH = 1, all other fields 0
@@ -61,11 +85,12 @@ impl RingInner {
     }
 
     /// 发送单个数据包
-    pub fn send_packet(&mut self, buff: &[u8]) -> Result<(), DError> {
-        if buff.len() > PACKET_SIZE as usize {
+    pub fn send_packet(&mut self, request: Request) -> Result<(), DError> {
+        if request.buff.len() > PACKET_SIZE as usize {
             return Err(DError::InvalidParameter);
         }
-        trace!("send {}", buff.len());
+        trace!("send {}", request.buff.len());
+        request.buff.confirm_write_all();
         let tail = self.get_tx_tail() as usize;
         let next_tail = (tail + 1) % self.count();
         let head = self.get_tx_head() as usize;
@@ -75,16 +100,10 @@ impl RingInner {
             return Err(DError::NoMemory); // 环形缓冲区已满
         }
 
-        for (i, &v) in buff.iter().enumerate() {
-            self.pkts[next_tail].set(i, v);
-        }
-
-        let buffer_addr = self.pkts[next_tail].bus_addr();
-
         // 设置描述符
         let desc = AdvTxDesc::new(
-            buffer_addr,
-            buff.len(),
+            request.bus_addr(),
+            request.buff.len(),
             TxAdvDescType::Data,
             &[
                 TxAdvDescCmd::EOP,
@@ -95,6 +114,7 @@ impl RingInner {
         );
 
         self.descriptors.set(tail, desc);
+        self.meta_ls[tail].request = Some(request);
 
         // 内存屏障确保描述符写入完成
         mb();
@@ -103,6 +123,32 @@ impl RingInner {
         self.reg_write(TDT, next_tail as u32);
 
         Ok(())
+    }
+
+    fn next_finished(&mut self) -> Option<Request> {
+        let head = self.get_tx_head() as usize;
+        if self.finished == head {
+            return None; // 没有新的完成描述符
+        }
+        let index = self.finished;
+
+        trace!("next_finished index: {index}");
+
+        // 检查描述符是否已完成
+        unsafe {
+            let desc = &self.descriptors[index];
+            if !desc.write.is_done() {
+                trace!("TxRing: next_finished descriptor not done at index: {index}");
+                return None; // 描述符未完成，无法获取数据
+            }
+        }
+        let request = self.meta_ls[index]
+            .request
+            .take()
+            .expect("Request should be set");
+
+        self.finished = (self.finished + 1) % self.count();
+        Some(request)
     }
 }
 
@@ -113,13 +159,8 @@ unsafe impl Send for TxRing {}
 impl TxRing {
     #[allow(clippy::arc_with_non_send_sync)]
     pub(crate) fn new(idx: usize, mmio_base: NonNull<u8>, size: usize) -> Result<Self, DError> {
-        let mut ring_inner = Ring::new(
-            idx,
-            mmio_base,
-            size,
-            PACKET_SIZE as usize,
-            Direction::ToDevice,
-        )?;
+        let mut ring_inner = RingInner::new(Ring::new(idx, mmio_base, size, PACKET_SIZE as usize)?);
+
         ring_inner.init()?;
         let ring = Arc::new(UnsafeCell::new(ring_inner));
         Ok(Self(ring))
@@ -133,34 +174,21 @@ impl TxRing {
         unsafe { &mut *self.0.get() }
     }
 
-    pub fn send(&mut self, buff: &[u8]) -> Result<(), DError> {
-        self.this_mut().send_packet(buff)
-    }
-
-    pub fn next_pkt(&mut self) -> Option<TxBuff<'_>> {
-        let ring = self.this_mut();
-        let next_tail = (ring.get_tx_tail() + 1) % ring.count() as u32;
-        if next_tail == ring.get_tx_head() {
-            return None; // 没有可用的包
-        }
-
-        Some(TxBuff { ring: self })
+    pub fn send(&mut self, request: Request) -> Result<(), DError> {
+        self.this_mut().send_packet(request)
     }
 
     pub fn request_max_count(&self) -> usize {
         self.this().count() - 1
     }
-}
 
-pub struct TxBuff<'a> {
-    ring: &'a mut TxRing,
-}
+    pub fn is_queue_full(&self) -> bool {
+        let head = self.this().get_tx_head() as usize;
+        let tail = self.this().get_tx_tail() as usize;
+        (tail + 1) % self.this().count() == head
+    }
 
-impl TxBuff<'_> {
-    pub fn send(self, buff: &[u8]) -> Result<(), DError> {
-        if buff.len() > PACKET_SIZE as usize {
-            return Err(DError::InvalidParameter);
-        }
-        self.ring.send(buff)
+    pub fn next_finished(&mut self) -> Option<Request> {
+        self.this_mut().next_finished()
     }
 }
