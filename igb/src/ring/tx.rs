@@ -80,18 +80,7 @@ impl RingInner {
         let buffer_addr = self.pkts[next_tail].bus_addr();
 
         // 设置描述符
-        let desc = AdvTxDesc {
-            read: crate::descriptor::AdvTxDescRead {
-                buffer_addr,
-                cmd_type_len: crate::descriptor::tx_desc_consts::CMD_EOP
-                    | crate::descriptor::tx_desc_consts::CMD_IFCS
-                    | crate::descriptor::tx_desc_consts::CMD_RS
-                    | crate::descriptor::tx_desc_consts::CMD_DEXT
-                    | crate::descriptor::tx_desc_consts::DTYPE_DATA
-                    | (buff.len() as u32 & crate::descriptor::tx_desc_consts::LEN_MASK),
-                olinfo_status: 0,
-            },
-        };
+        let desc = AdvTxDesc::new(buffer_addr, buff.len());
 
         self.descriptors.set(tail, desc);
 

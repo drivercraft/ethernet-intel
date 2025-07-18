@@ -74,29 +74,28 @@ register_bitfields! [
         IPE OFFSET(10) NUMBITS(1)[],    // IP Error
         RXE OFFSET(11) NUMBITS(1)[],    // RX Error
     ],
+
+    // Advanced Transmit Descriptor CMD_TYPE_LEN field
+    pub TX_DESC_CMD_TYPE_LEN [
+        LEN OFFSET(0) NUMBITS(20)[],        // Packet Length [19:0]
+        DTYPE OFFSET(20) NUMBITS(4)[
+            Data = 0b11,                    // Data descriptor
+            Context = 0b10,                 // Context descriptor
+        ],
+        CMD_EOP OFFSET(24) NUMBITS(1)[],    // End of Packet
+        CMD_IFCS OFFSET(25) NUMBITS(1)[],   // Insert FCS
+        CMD_IC OFFSET(26) NUMBITS(1)[],     // Insert Checksum
+        CMD_RS OFFSET(27) NUMBITS(1)[],     // Report Status
+        CMD_DEXT OFFSET(29) NUMBITS(1)[],   // Descriptor Extension
+        CMD_VLE OFFSET(30) NUMBITS(1)[],    // VLAN Packet Enable
+        CMD_IDE OFFSET(31) NUMBITS(1)[],    // Interrupt Delay Enable
+    ],
+
+    // Advanced Transmit Descriptor Status field (write-back format)
+    pub TX_DESC_STATUS [
+        DD OFFSET(0) NUMBITS(1)[],          // Descriptor Done
+    ],
 ];
-
-// Advanced Transmit Descriptor constants
-pub mod tx_desc_consts {
-    // CMD_TYPE_LEN field bits
-    pub const CMD_EOP: u32 = 1 << 24; // End of Packet
-    pub const CMD_IFCS: u32 = 1 << 25; // Insert FCS
-    pub const CMD_IC: u32 = 1 << 26; // Insert Checksum
-    pub const CMD_RS: u32 = 1 << 27; // Report Status
-    pub const CMD_DEXT: u32 = 1 << 29; // Descriptor Extension
-    pub const CMD_VLE: u32 = 1 << 30; // VLAN Packet Enable
-    pub const CMD_IDE: u32 = 1 << 31; // Interrupt Delay Enable
-
-    // Descriptor types
-    pub const DTYPE_DATA: u32 = 0b11 << 20; // Data descriptor
-    pub const DTYPE_CONTEXT: u32 = 0b10 << 20; // Context descriptor
-
-    // Length mask
-    pub const LEN_MASK: u32 = 0x000F_FFFF; // Packet Length [19:0]
-
-    // Status bits in write-back format
-    pub const DD_BIT: u32 = 1 << 0; // Descriptor Done
-}
 
 /// RSS类型枚举
 #[repr(u8)]
@@ -162,6 +161,26 @@ pub union AdvTxDesc {
 
 impl Descriptor for AdvTxDesc {}
 
+impl AdvTxDesc {
+    /// 创建新的发送描述符
+    pub fn new(buffer_addr: u64, buffer_len: usize) -> Self {
+        let cmd_type_len = TX_DESC_CMD_TYPE_LEN::CMD_EOP::SET
+            + TX_DESC_CMD_TYPE_LEN::CMD_IFCS::SET
+            + TX_DESC_CMD_TYPE_LEN::CMD_RS::SET
+            + TX_DESC_CMD_TYPE_LEN::CMD_DEXT::SET
+            + TX_DESC_CMD_TYPE_LEN::DTYPE::Data
+            + TX_DESC_CMD_TYPE_LEN::LEN.val(buffer_len as _);
+
+        Self {
+            read: AdvTxDescRead {
+                buffer_addr,
+                cmd_type_len: cmd_type_len.value,
+                olinfo_status: 0,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct AdvTxDescRead {
@@ -176,6 +195,13 @@ pub struct AdvTxDescWB {
     pub rsvd: u64,
     pub nxtseq_seed: u32,
     pub status: u32,
+}
+
+impl AdvTxDescWB {
+    /// 检查描述符是否已完成 (DD bit)
+    pub fn is_done(&self) -> bool {
+        unsafe { self.status & TX_DESC_STATUS::DD.mask != 0 }
+    }
 }
 
 /// Advanced Receive Descriptor (82576EB)
