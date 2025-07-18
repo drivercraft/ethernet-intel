@@ -1,73 +1,80 @@
+use tock_registers::register_bitfields;
+
 pub trait Descriptor {}
 
-// Advanced Receive Descriptor constants
-pub mod rx_desc_consts {
-    // Read Format bit masks
-    pub const ADDR_MASK: u64 = 0xFFFF_FFFF_FFFF_FFFE; // Address bits [63:1]
-    pub const NSE_MASK: u64 = 0x0000_0000_0000_0001; // No-Snoop Enable bit [0]
-    pub const DD_MASK: u64 = 0x0000_0000_0000_0001; // Descriptor Done bit [0]
+register_bitfields! [
+    u64,
 
-    // Write-back Format bit masks and shifts
-    // Low DWORD (63:0)
-    pub const RSS_HASH_MASK: u32 = 0xFFFF_FFFF; // RSS Hash [31:0]
-    pub const FRAG_CSUM_MASK: u32 = 0xFFFF_0000; // Fragment Checksum [31:16]
-    pub const FRAG_CSUM_SHIFT: u32 = 16;
-    pub const IP_ID_MASK: u32 = 0x0000_FFFF; // IP identification [15:0]
+    // Advanced Receive Descriptor Read Format
+    RX_DESC_READ_PKT_ADDR [
+        ADDR OFFSET(1) NUMBITS(63)[],  // Address bits [63:1]
+        NSE OFFSET(0) NUMBITS(1)[],    // No-Snoop Enable bit [0]
+    ],
 
-    // 注意：根据Intel文档，位字段应该是：
-    // 63:48 - RSS Hash/Fragment Checksum (高16位)
-    // 47:32 - IP identification
-    // 31:22 - HDR_LEN (Header Length)
-    // 21 - SPH (Split Header)
-    // 20:0 - Extended Status
-    pub const HDR_LEN_MASK: u32 = 0xFFC0_0000; // Header Length [31:22]
-    pub const HDR_LEN_SHIFT: u32 = 22;
-    pub const SPH_MASK: u32 = 0x0020_0000; // Split Header [21]
-    pub const SPH_SHIFT: u32 = 21;
-    pub const EXT_STATUS_LO_MASK: u32 = 0x001F_FFFF; // Extended Status [20:0]
+    RX_DESC_READ_HDR_ADDR [
+        ADDR OFFSET(1) NUMBITS(63)[],  // Address bits [63:1]
+        DD OFFSET(0) NUMBITS(1)[],     // Descriptor Done bit [0]
+    ],
+];
 
-    // High DWORD (127:64)
-    // 63:48 - VLAN Tag
-    // 47:32 - PKT_LEN (Packet Length)
-    // 31:20 - Extended Error
-    // 19:17 - RSS Type
-    // 16:4 - Packet Type
-    // 3:0 - Extended Status
-    pub const EXT_ERROR_MASK: u32 = 0xFFF0_0000; // Extended Error [31:20]
-    pub const EXT_ERROR_SHIFT: u32 = 20;
-    pub const RSS_TYPE_MASK: u32 = 0x000E_0000; // RSS Type [19:17]
-    pub const RSS_TYPE_SHIFT: u32 = 17;
-    pub const PKT_TYPE_MASK: u32 = 0x0001_FFF0; // Packet Type [16:4]
-    pub const PKT_TYPE_SHIFT: u32 = 4;
-    pub const EXT_STATUS_HI_MASK: u32 = 0x0000_000F; // Extended Status [3:0]
+register_bitfields! [
+    u32,
 
-    pub const VLAN_TAG_MASK: u32 = 0xFFFF_0000; // VLAN Tag [31:16]
-    pub const VLAN_TAG_SHIFT: u32 = 16;
-    pub const PKT_LEN_MASK: u32 = 0x0000_FFFF; // Packet Length [15:0]
+    // Advanced Receive Descriptor Write-back Format Low DWORD
+    RX_DESC_WB_LO_RSS_HASH [
+        RSS_HASH OFFSET(0) NUMBITS(32)[],  // RSS Hash [31:0]
+    ],
+
+    RX_DESC_WB_LO_FRAG_CSUM [
+        FRAG_CSUM OFFSET(16) NUMBITS(16)[],  // Fragment Checksum [31:16]
+        IP_ID OFFSET(0) NUMBITS(16)[],       // IP identification [15:0]
+    ],
+
+    RX_DESC_WB_LO_HDR_STATUS [
+        HDR_LEN OFFSET(22) NUMBITS(10)[],    // Header Length [31:22]
+        SPH OFFSET(21) NUMBITS(1)[],         // Split Header [21]
+        EXT_STATUS_LO OFFSET(0) NUMBITS(21)[], // Extended Status [20:0]
+    ],
+
+    // Advanced Receive Descriptor Write-back Format High DWORD
+    RX_DESC_WB_HI_VLAN_LEN [
+        VLAN_TAG OFFSET(16) NUMBITS(16)[],   // VLAN Tag [31:16]
+        PKT_LEN OFFSET(0) NUMBITS(16)[],     // Packet Length [15:0]
+    ],
+
+    RX_DESC_WB_HI_ERROR_STATUS [
+        EXT_ERROR OFFSET(20) NUMBITS(12)[],  // Extended Error [31:20]
+        RSS_TYPE OFFSET(17) NUMBITS(3)[],    // RSS Type [19:17]
+        PKT_TYPE OFFSET(4) NUMBITS(13)[],    // Packet Type [16:4]
+        EXT_STATUS_HI OFFSET(0) NUMBITS(4)[], // Extended Status [3:0]
+    ],
 
     // Extended Status bits
-    pub const DD_BIT: u32 = 1 << 0; // Descriptor Done
-    pub const EOP_BIT: u32 = 1 << 1; // End of Packet
-    pub const VP_BIT: u32 = 1 << 3; // VLAN Packet
-    pub const UDPCS_BIT: u32 = 1 << 4; // UDP Checksum
-    pub const L4I_BIT: u32 = 1 << 5; // L4 Integrity check
-    pub const IPCS_BIT: u32 = 1 << 6; // IP Checksum
-    pub const PIF_BIT: u32 = 1 << 7; // Passed In-exact Filter
-    pub const VEXT_BIT: u32 = 1 << 9; // First VLAN on double VLAN
-    pub const UDPV_BIT: u32 = 1 << 10; // UDP Valid
-    pub const LLINT_BIT: u32 = 1 << 11; // Low Latency Interrupt
-    pub const SECP_BIT: u32 = 1 << 17; // Security Processing
-    pub const LB_BIT: u32 = 1 << 18; // Loopback
-    pub const TS_BIT: u32 = 1 << 16; // Time Stamped
+    RX_DESC_EXT_STATUS [
+        DD OFFSET(0) NUMBITS(1)[],      // Descriptor Done
+        EOP OFFSET(1) NUMBITS(1)[],     // End of Packet
+        VP OFFSET(3) NUMBITS(1)[],      // VLAN Packet
+        UDPCS OFFSET(4) NUMBITS(1)[],   // UDP Checksum
+        L4I OFFSET(5) NUMBITS(1)[],     // L4 Integrity check
+        IPCS OFFSET(6) NUMBITS(1)[],    // IP Checksum
+        PIF OFFSET(7) NUMBITS(1)[],     // Passed In-exact Filter
+        VEXT OFFSET(9) NUMBITS(1)[],    // First VLAN on double VLAN
+        UDPV OFFSET(10) NUMBITS(1)[],   // UDP Valid
+        LLINT OFFSET(11) NUMBITS(1)[],  // Low Latency Interrupt
+        TS OFFSET(16) NUMBITS(1)[],     // Time Stamped
+        SECP OFFSET(17) NUMBITS(1)[],   // Security Processing
+        LB OFFSET(18) NUMBITS(1)[],     // Loopback
+    ],
 
     // Extended Error bits
-    pub const HBO_BIT: u32 = 1 << 3; // Header Buffer Overflow
-    pub const SECERR_MASK: u32 = 0x0000_0180; // Security Error [8:7]
-    pub const SECERR_SHIFT: u32 = 7;
-    pub const L4E_BIT: u32 = 1 << 9; // L4 Error
-    pub const IPE_BIT: u32 = 1 << 10; // IP Error
-    pub const RXE_BIT: u32 = 1 << 11; // RX Error
-}
+    RX_DESC_EXT_ERROR [
+        HBO OFFSET(3) NUMBITS(1)[],     // Header Buffer Overflow
+        SECERR OFFSET(7) NUMBITS(2)[],  // Security Error [8:7]
+        L4E OFFSET(9) NUMBITS(1)[],     // L4 Error
+        IPE OFFSET(10) NUMBITS(1)[],    // IP Error
+        RXE OFFSET(11) NUMBITS(1)[],    // RX Error
+    ],
+];
 
 // Advanced Transmit Descriptor constants
 pub mod tx_desc_consts {
@@ -302,54 +309,39 @@ impl AdvRxDescRead {
     /// 创建新的接收描述符
     pub fn new(pkt_addr: u64, hdr_addr: u64, nse: bool) -> Self {
         let pkt_addr = if nse {
-            pkt_addr | rx_desc_consts::NSE_MASK
+            pkt_addr | RX_DESC_READ_PKT_ADDR::NSE.mask
         } else {
-            pkt_addr & !rx_desc_consts::NSE_MASK
+            pkt_addr & !RX_DESC_READ_PKT_ADDR::NSE.mask
         };
 
         Self {
             pkt_addr,
-            hdr_addr: hdr_addr & !rx_desc_consts::DD_MASK, // 确保DD位为0
+            hdr_addr: hdr_addr & !RX_DESC_READ_HDR_ADDR::DD.mask, // 确保DD位为0
         }
-    }
-
-    /// 获取包缓冲区地址
-    pub fn packet_buffer_addr(&self) -> u64 {
-        self.pkt_addr & rx_desc_consts::ADDR_MASK
-    }
-
-    /// 获取头部缓冲区地址
-    pub fn header_buffer_addr(&self) -> u64 {
-        self.hdr_addr & rx_desc_consts::ADDR_MASK
-    }
-
-    /// 检查是否启用了No-Snoop
-    pub fn no_snoop_enabled(&self) -> bool {
-        self.pkt_addr & rx_desc_consts::NSE_MASK != 0
     }
 }
 
 impl AdvRxDescWB {
     /// 检查描述符是否已完成 (DD bit)
     pub fn is_done(&self) -> bool {
-        unsafe { self.hi_dword.fields.error_type_status & rx_desc_consts::DD_BIT != 0 }
+        unsafe { self.hi_dword.fields.error_type_status & RX_DESC_EXT_STATUS::DD.mask != 0 }
     }
 
     /// 检查是否为包的最后一个描述符 (EOP bit)
     pub fn is_end_of_packet(&self) -> bool {
-        unsafe { self.hi_dword.fields.error_type_status & rx_desc_consts::EOP_BIT != 0 }
+        unsafe { self.hi_dword.fields.error_type_status & RX_DESC_EXT_STATUS::EOP.mask != 0 }
     }
 
     /// 获取包长度
     pub fn packet_length(&self) -> u16 {
-        unsafe { (self.hi_dword.fields.vlan_length & rx_desc_consts::PKT_LEN_MASK) as u16 }
+        unsafe { (self.hi_dword.fields.vlan_length & RX_DESC_WB_HI_VLAN_LEN::PKT_LEN.mask) as u16 }
     }
 
     /// 获取VLAN标签
     pub fn vlan_tag(&self) -> u16 {
         unsafe {
-            ((self.hi_dword.fields.vlan_length & rx_desc_consts::VLAN_TAG_MASK)
-                >> rx_desc_consts::VLAN_TAG_SHIFT) as u16
+            ((self.hi_dword.fields.vlan_length & RX_DESC_WB_HI_VLAN_LEN::VLAN_TAG.mask)
+                >> RX_DESC_WB_HI_VLAN_LEN::VLAN_TAG.shift) as u16
         }
     }
 
@@ -361,38 +353,41 @@ impl AdvRxDescWB {
     /// 获取头部长度
     pub fn header_length(&self) -> u16 {
         unsafe {
-            ((self.lo_dword.fields.hdr_status & rx_desc_consts::HDR_LEN_MASK)
-                >> rx_desc_consts::HDR_LEN_SHIFT) as u16
+            ((self.lo_dword.fields.hdr_status & RX_DESC_WB_LO_HDR_STATUS::HDR_LEN.mask)
+                >> RX_DESC_WB_LO_HDR_STATUS::HDR_LEN.shift) as u16
         }
     }
 
     /// 检查是否分割头部 (SPH bit)
     pub fn is_split_header(&self) -> bool {
-        unsafe { self.lo_dword.fields.hdr_status & rx_desc_consts::SPH_MASK != 0 }
+        unsafe { self.lo_dword.fields.hdr_status & RX_DESC_WB_LO_HDR_STATUS::SPH.mask != 0 }
     }
 
     /// 获取包类型
     pub fn packet_type(&self) -> u16 {
         unsafe {
-            ((self.hi_dword.fields.error_type_status & rx_desc_consts::PKT_TYPE_MASK)
-                >> rx_desc_consts::PKT_TYPE_SHIFT) as u16
+            ((self.hi_dword.fields.error_type_status & RX_DESC_WB_HI_ERROR_STATUS::PKT_TYPE.mask)
+                >> RX_DESC_WB_HI_ERROR_STATUS::PKT_TYPE.shift) as u16
         }
     }
 
     /// 获取RSS类型
     pub fn rss_type(&self) -> u8 {
         unsafe {
-            ((self.hi_dword.fields.error_type_status & rx_desc_consts::RSS_TYPE_MASK)
-                >> rx_desc_consts::RSS_TYPE_SHIFT) as u8
+            ((self.hi_dword.fields.error_type_status & RX_DESC_WB_HI_ERROR_STATUS::RSS_TYPE.mask)
+                >> RX_DESC_WB_HI_ERROR_STATUS::RSS_TYPE.shift) as u8
         }
     }
 
     /// 检查是否有错误
     pub fn has_errors(&self) -> bool {
         unsafe {
-            (self.hi_dword.fields.error_type_status & rx_desc_consts::EXT_ERROR_MASK) != 0
+            (self.hi_dword.fields.error_type_status & RX_DESC_WB_HI_ERROR_STATUS::EXT_ERROR.mask)
+                != 0
                 || (self.hi_dword.fields.error_type_status
-                    & (rx_desc_consts::L4E_BIT | rx_desc_consts::IPE_BIT | rx_desc_consts::RXE_BIT))
+                    & (RX_DESC_EXT_ERROR::L4E.mask
+                        | RX_DESC_EXT_ERROR::IPE.mask
+                        | RX_DESC_EXT_ERROR::RXE.mask))
                     != 0
         }
     }
@@ -400,16 +395,16 @@ impl AdvRxDescWB {
     /// 检查IP校验和是否有效
     pub fn ip_checksum_valid(&self) -> bool {
         unsafe {
-            (self.hi_dword.fields.error_type_status & rx_desc_consts::IPCS_BIT) != 0
-                && (self.hi_dword.fields.error_type_status & rx_desc_consts::IPE_BIT) == 0
+            (self.hi_dword.fields.error_type_status & RX_DESC_EXT_STATUS::IPCS.mask) != 0
+                && (self.hi_dword.fields.error_type_status & RX_DESC_EXT_ERROR::IPE.mask) == 0
         }
     }
 
     /// 检查L4校验和是否有效
     pub fn l4_checksum_valid(&self) -> bool {
         unsafe {
-            (self.hi_dword.fields.error_type_status & rx_desc_consts::L4I_BIT) != 0
-                && (self.hi_dword.fields.error_type_status & rx_desc_consts::L4E_BIT) == 0
+            (self.hi_dword.fields.error_type_status & RX_DESC_EXT_STATUS::L4I.mask) != 0
+                && (self.hi_dword.fields.error_type_status & RX_DESC_EXT_ERROR::L4E.mask) == 0
         }
     }
 
@@ -421,42 +416,45 @@ impl AdvRxDescWB {
     /// 获取安全错误类型
     pub fn security_error(&self) -> SecurityError {
         unsafe {
-            let error_bits = (self.hi_dword.fields.error_type_status & rx_desc_consts::SECERR_MASK)
-                >> rx_desc_consts::SECERR_SHIFT;
+            let error_bits = (self.hi_dword.fields.error_type_status
+                & RX_DESC_EXT_ERROR::SECERR.mask)
+                >> RX_DESC_EXT_ERROR::SECERR.shift;
             SecurityError::from(error_bits as u8)
         }
     }
 
     /// 检查是否有头部缓冲区溢出
     pub fn has_header_buffer_overflow(&self) -> bool {
-        unsafe { (self.hi_dword.fields.error_type_status & rx_desc_consts::HBO_BIT) != 0 }
+        unsafe { (self.hi_dword.fields.error_type_status & RX_DESC_EXT_ERROR::HBO.mask) != 0 }
     }
 
     /// 检查是否为VLAN包
     pub fn is_vlan_packet(&self) -> bool {
-        unsafe { (self.hi_dword.fields.error_type_status & rx_desc_consts::VP_BIT) != 0 }
+        unsafe { (self.hi_dword.fields.error_type_status & RX_DESC_EXT_STATUS::VP.mask) != 0 }
     }
 
     /// 检查是否为回环包
     pub fn is_loopback_packet(&self) -> bool {
-        unsafe { (self.hi_dword.fields.error_type_status & rx_desc_consts::LB_BIT) != 0 }
+        unsafe { (self.hi_dword.fields.error_type_status & RX_DESC_EXT_STATUS::LB.mask) != 0 }
     }
 
     /// 检查是否为时间戳包
     pub fn is_timestamped(&self) -> bool {
-        unsafe { (self.hi_dword.fields.error_type_status & rx_desc_consts::TS_BIT) != 0 }
+        unsafe { (self.hi_dword.fields.error_type_status & RX_DESC_EXT_STATUS::TS.mask) != 0 }
     }
 
     /// 获取片段校验和（当不使用RSS时）
     pub fn fragment_checksum(&self) -> u16 {
         unsafe {
-            ((self.lo_dword.fields.rss_hash_or_csum_ip & rx_desc_consts::FRAG_CSUM_MASK)
-                >> rx_desc_consts::FRAG_CSUM_SHIFT) as u16
+            ((self.lo_dword.fields.rss_hash_or_csum_ip & RX_DESC_WB_LO_FRAG_CSUM::FRAG_CSUM.mask)
+                >> RX_DESC_WB_LO_FRAG_CSUM::FRAG_CSUM.shift) as u16
         }
     }
 
     /// 获取IP标识符（当不使用RSS时）
     pub fn ip_identification(&self) -> u16 {
-        unsafe { (self.lo_dword.fields.rss_hash_or_csum_ip & rx_desc_consts::IP_ID_MASK) as u16 }
+        unsafe {
+            (self.lo_dword.fields.rss_hash_or_csum_ip & RX_DESC_WB_LO_FRAG_CSUM::IP_ID.mask) as u16
+        }
     }
 }

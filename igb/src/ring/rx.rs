@@ -24,10 +24,7 @@ impl RingInner {
         for i in 0..self.descriptors.len() {
             let pkt_addr = self.pkts[i].bus_addr();
             let desc = AdvRxDesc {
-                read: AdvRxDescRead {
-                    pkt_addr,
-                    hdr_addr: 0,
-                },
+                read: AdvRxDescRead::new(pkt_addr, 0, false),
             };
             self.descriptors.set(i, desc);
         }
