@@ -8,6 +8,7 @@ use mbarrier::mb;
 use tock_registers::register_bitfields;
 
 use crate::{
+    Request,
     descriptor::{AdvTxDesc, Descriptor},
     err::DError,
     osal::wait_for,
@@ -15,7 +16,7 @@ use crate::{
 
 mod rx;
 mod tx;
-pub use rx::{RxBuff, RxRing};
+pub use rx::{RxPacket, RxRing};
 pub use tx::TxRing;
 
 pub const DEFAULT_RING_SIZE: usize = 256;
@@ -98,7 +99,7 @@ register_bitfields! [
 
 #[derive(Default, Clone)]
 struct RingElemMeta {
-    buff_ptr: usize,
+    request: Request,
 }
 
 struct Ring<D: Descriptor> {

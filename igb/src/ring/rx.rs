@@ -6,7 +6,7 @@ use crate::{
     descriptor::{AdvRxDesc, AdvRxDescRead},
 };
 use alloc::sync::Arc;
-use log::trace;
+use log::{error, trace};
 
 struct RingInner {
     base: Ring<AdvRxDesc>,
@@ -70,7 +70,7 @@ impl RingInner {
         // 暂时不配置 MRQC
 
         // Note: The tail register of the queue (RDT[n]) should not be bumped until the queue is enabled.
-        self.update_tail(self.descriptors.len() - 1);
+        // self.update_tail(self.descriptors.len() - 1);
         Ok(())
     }
 
@@ -110,26 +110,6 @@ impl RingInner {
     //         .value,
     //     );
     // }
-
-    /// 检查描述符是否已完成(DD位)
-    ///
-    /// # 参数
-    /// - `desc_index`: 描述符索引
-    ///
-    /// # 返回
-    /// 如果描述符已完成则返回 true，否则返回 false
-    pub fn is_descriptor_done(&self, desc_index: usize) -> bool {
-        if desc_index >= self.descriptors.len() {
-            return false;
-        }
-
-        // 检查写回格式中的DD位
-        let desc = &self.descriptors[desc_index];
-        unsafe {
-            let wb = desc.write;
-            wb.is_done()
-        }
-    }
 
     /// 获取当前头部指针值
     pub fn get_head(&self) -> u32 {
@@ -194,24 +174,58 @@ impl RxRing {
         self.this().pkt_size
     }
 
-    pub fn next_pkt(&mut self) -> Option<RxBuff<'_>> {
+    pub fn next_pkt(&mut self) -> Option<RxPacket<'_>> {
+        let index = self.next_index();
         let ring = self.this_mut();
         let head = ring.get_head() as usize;
-        let tail = ring.get_tail() as usize;
-        trace!("RxRing: next_pkt head: {head}, tail: {tail}");
-        let index = (tail + 1) % ring.count();
         if head == index {
             return None; // 没有可用的缓冲区
         }
-
+        let desc = &ring.descriptors[index];
         // 检查描述符是否已完成
-        if !ring.is_descriptor_done(index) {
+        if !unsafe { desc.write.is_done() } {
             trace!("RxRing: next_pkt descriptor not done at index: {index}");
             return None; // 描述符未完成，无法获取数据
         }
         trace!("RxRing: next_pkt index: {index}");
-        // 返回 RxBuff 实例
-        Some(RxBuff { ring: self, index })
+        let request = ring.meta_ls[index].request;
+        let len = unsafe { desc.write.packet_length() as usize };
+
+        Some(RxPacket {
+            ring: self,
+            request,
+            len,
+        })
+    }
+
+    pub fn submit(&mut self, request: Request) -> Result<(), DError> {
+        let index = self.this_mut().get_tail() as usize;
+        let ring = self.this_mut();
+        if index + 1 == ring.get_head() as usize {
+            error!("RxRing: submit no available buffer at index: {index}");
+            return Err(DError::NoMemory); // 没有可用的缓冲区
+        }
+
+        // 更新描述符
+        let desc = AdvRxDesc {
+            read: AdvRxDescRead::new(request.buff_bus_addr, 0, false),
+        };
+        ring.descriptors.set(index, desc);
+        ring.meta_ls[index].request = request;
+
+        // 更新尾部指针
+        ring.update_tail(index + 1);
+
+        Ok(())
+    }
+
+    fn next_index(&self) -> usize {
+        let ring = self.this();
+        (ring.get_tail() as usize + 1) % ring.count()
+    }
+
+    pub fn request_max_count(&self) -> usize {
+        self.this().count() - 1
     }
 }
 
@@ -222,22 +236,22 @@ impl Drop for RxRing {
     }
 }
 
-pub struct RxBuff<'a> {
+pub struct RxPacket<'a> {
+    pub request: Request,
     ring: &'a mut RxRing,
-    index: usize,
+    len: usize,
 }
 
-impl Deref for RxBuff<'_> {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        self.ring.this().pkts[self.index].deref()
+impl<'a> RxPacket<'a> {
+    pub fn re_submit(self) -> Result<(), DError> {
+        self.ring.submit(self.request)
     }
 }
 
-impl Drop for RxBuff<'_> {
-    fn drop(&mut self) {
-        // 在释放时更新尾部指针
-        self.ring.this_mut().update_tail(self.index);
+impl Deref for RxPacket<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.request.deref()[..self.len]
     }
 }

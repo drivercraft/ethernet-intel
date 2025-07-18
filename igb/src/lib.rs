@@ -1,7 +1,8 @@
 #![no_std]
 
-use core::ptr::NonNull;
+use core::{ops::Deref, ptr::NonNull};
 
+use dma_api::{DSliceMut, Direction};
 use log::debug;
 pub use mac::{MacAddr6, MacStatus};
 pub use trait_ffi::impl_extern_trait;
@@ -20,7 +21,60 @@ mod phy;
 mod ring;
 
 pub use futures::{Stream, StreamExt};
-pub use ring::{RxBuff, RxRing, TxRing};
+pub use ring::{RxPacket, RxRing, TxRing};
+
+#[derive(Clone, Copy)]
+pub struct Request {
+    buff_vaddr: usize,
+    buff_bus_addr: u64,
+    cap: usize,
+    dir: Direction,
+}
+
+impl Default for Request {
+    fn default() -> Self {
+        Self {
+            buff_vaddr: 0,
+            buff_bus_addr: 0,
+            cap: 0,
+            dir: Direction::Bidirectional,
+        }
+    }
+}
+
+impl Request {
+    fn new(buff: &mut [u8], dir: Direction) -> Self {
+        let len = buff.len();
+        let buff_vaddr = buff.as_ptr() as usize;
+        let buff_bus_addr = { DSliceMut::from(buff, Direction::FromDevice).bus_addr() };
+        Self {
+            buff_vaddr,
+            buff_bus_addr,
+            cap: len,
+            dir,
+        }
+    }
+    pub fn new_rx(buff: &mut [u8]) -> Self {
+        Self::new(buff, Direction::FromDevice)
+    }
+
+    pub fn new_tx(buff: &mut [u8]) -> Self {
+        Self::new(buff, Direction::ToDevice)
+    }
+}
+
+impl Deref for Request {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe {
+            let s = core::slice::from_raw_parts_mut(self.buff_vaddr as *mut u8, self.cap);
+            let d = DSliceMut::from(s, self.dir);
+            d.preper_read_all();
+            core::slice::from_raw_parts_mut(self.buff_vaddr as *mut u8, self.cap)
+        }
+    }
+}
 
 pub struct Igb {
     mac: mac::Mac,

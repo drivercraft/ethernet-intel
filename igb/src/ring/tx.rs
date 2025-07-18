@@ -125,6 +125,10 @@ impl TxRing {
         Ok(Self(ring))
     }
 
+    fn this(&self) -> &RingInner {
+        unsafe { &*self.0.get() }
+    }
+
     fn this_mut(&mut self) -> &mut RingInner {
         unsafe { &mut *self.0.get() }
     }
@@ -141,6 +145,10 @@ impl TxRing {
         }
 
         Some(TxBuff { ring: self })
+    }
+
+    pub fn request_max_count(&self) -> usize {
+        self.this().count() - 1
     }
 }
 

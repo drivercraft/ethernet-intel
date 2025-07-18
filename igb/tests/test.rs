@@ -26,7 +26,7 @@ mod tests {
         println,
         time::spin_delay,
     };
-    use eth_igb::{Igb, RxBuff};
+    use eth_igb::{Igb, RxPacket};
     use log::*;
     use pcie::{CommandRegister, PciCapability, RootComplexGeneric, SimpleBarAllocator};
     use smoltcp::socket::icmp::{self, Socket as IcmpSocket};
@@ -69,12 +69,29 @@ mod tests {
     // SmolTCP device adapter for IGB
     struct IgbDevice {
         rx_ring: eth_igb::RxRing,
+        rx_buff_pool: alloc::vec::Vec<alloc::vec::Vec<u8>>,
         tx_ring: eth_igb::TxRing,
+        tx_buff_pool: alloc::vec::Vec<alloc::vec::Vec<u8>>,
     }
 
     impl IgbDevice {
-        fn new(rx_ring: eth_igb::RxRing, tx_ring: eth_igb::TxRing) -> Self {
-            Self { rx_ring, tx_ring }
+        fn new(mut rx_ring: eth_igb::RxRing, tx_ring: eth_igb::TxRing) -> Self {
+            let mut rx_buff_pool = alloc::vec::Vec::with_capacity(rx_ring.request_max_count());
+            for _ in 0..rx_ring.request_max_count() {
+                let mut buff = alloc::vec![0u8; rx_ring.packet_size()];
+                let request = eth_igb::Request::new_rx(&mut buff);
+                rx_ring.submit(request).unwrap();
+                rx_buff_pool.push(buff);
+            }
+
+            let tx_buff_pool = alloc::vec::Vec::new();
+
+            Self {
+                rx_ring,
+                tx_ring,
+                rx_buff_pool,
+                tx_buff_pool,
+            }
         }
     }
 
@@ -88,17 +105,13 @@ mod tests {
         ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
             self.rx_ring.next_pkt().map(|buff| {
                 let rx_token = IgbRxToken { buff };
-                let tx_token = IgbTxToken {
-                    tx_ring: &mut self.tx_ring,
-                };
+                let tx_token = IgbTxToken { device: self };
                 (rx_token, tx_token)
             })
         }
 
         fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {
-            Some(IgbTxToken {
-                tx_ring: &mut self.tx_ring,
-            })
+            Some(IgbTxToken { device: self })
         }
 
         fn capabilities(&self) -> DeviceCapabilities {
@@ -111,7 +124,7 @@ mod tests {
     }
 
     struct IgbRxToken<'a> {
-        buff: RxBuff<'a>,
+        buff: RxPacket<'a>,
     }
 
     impl<'a> RxToken for IgbRxToken<'a> {
@@ -120,12 +133,14 @@ mod tests {
             F: FnOnce(&[u8]) -> R,
         {
             debug!("rcv one");
-            f(&self.buff)
+            let r = f(&self.buff);
+            self.buff.re_submit().unwrap();
+            r
         }
     }
 
     struct IgbTxToken<'a> {
-        tx_ring: &'a mut eth_igb::TxRing,
+        device: &'a mut IgbDevice,
     }
 
     impl<'a> TxToken for IgbTxToken<'a> {
@@ -135,7 +150,11 @@ mod tests {
         {
             let mut buffer = alloc::vec![0u8; len];
             let result = f(&mut buffer);
-            self.tx_ring.send(&buffer).unwrap();
+            self.device.tx_buff_pool.push(buffer);
+            self.device
+                .tx_ring
+                .send(&self.device.tx_buff_pool.last().unwrap())
+                .unwrap();
             result
         }
     }
