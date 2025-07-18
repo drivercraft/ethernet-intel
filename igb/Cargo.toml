@@ -1,6 +1,7 @@
 [package]
 authors = ["周睿 <zrufo747@outlook.com>"]
 categories = ["embedded", "no-std"]
+description = "Intel IGB Ethernet driver"
 edition = "2024"
 keywords = ["os", "driver", "ethernet", "intel"]
 license = "MIT"
