@@ -1,5 +1,3 @@
-use core::ops::Deref;
-
 use alloc::sync::Arc;
 use log::trace;
 
@@ -48,20 +46,6 @@ impl RingInner {
         // This is handled by the MAC layer through mac.enable_tx()
         debug!("TX ring initialized successfully");
         Ok(())
-    }
-
-    /// 检查描述符是否已完成(DD位)
-    pub fn is_tx_descriptor_done(&self, desc_index: usize) -> bool {
-        if desc_index >= self.descriptors.len() {
-            return false;
-        }
-
-        // 检查写回格式中的DD位
-        let desc = &self.descriptors[desc_index];
-        unsafe {
-            let wb = desc.write;
-            (wb.status & crate::descriptor::tx_desc_consts::DD_BIT) != 0
-        }
     }
 
     /// 获取当前头部指针值
@@ -126,6 +110,7 @@ pub struct TxRing(Arc<UnsafeCell<RingInner>>);
 unsafe impl Send for TxRing {}
 
 impl TxRing {
+    #[allow(clippy::arc_with_non_send_sync)]
     pub(crate) fn new(idx: usize, mmio_base: NonNull<u8>, size: usize) -> Result<Self, DError> {
         let mut ring_inner = Ring::new(
             idx,
@@ -139,9 +124,6 @@ impl TxRing {
         Ok(Self(ring))
     }
 
-    fn this(&self) -> &RingInner {
-        unsafe { &*self.0.get() }
-    }
     fn this_mut(&mut self) -> &mut RingInner {
         unsafe { &mut *self.0.get() }
     }

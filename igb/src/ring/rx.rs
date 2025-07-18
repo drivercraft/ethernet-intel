@@ -101,18 +101,18 @@ impl RingInner {
         );
     }
 
-    pub fn flush_descriptors(&mut self) {
-        // 触发描述符写回刷新
-        self.reg_write(
-            RXDCTL,
-            (RXDCTL::PTHRESH.val(8)
-                + RXDCTL::HTHRESH.val(8)
-                + RXDCTL::WTHRESH.val(1)
-                + RXDCTL::ENABLE::Enabled
-                + RXDCTL::SWFLUSH.val(1))
-            .value,
-        );
-    }
+    // pub fn flush_descriptors(&mut self) {
+    //     // 触发描述符写回刷新
+    //     self.reg_write(
+    //         RXDCTL,
+    //         (RXDCTL::PTHRESH.val(8)
+    //             + RXDCTL::HTHRESH.val(8)
+    //             + RXDCTL::WTHRESH.val(1)
+    //             + RXDCTL::ENABLE::Enabled
+    //             + RXDCTL::SWFLUSH.val(1))
+    //         .value,
+    //     );
+    // }
 
     /// 检查描述符是否已完成(DD位)
     ///
@@ -151,11 +151,6 @@ impl RingInner {
         }
         self.reg_write(RDT, tail as u32);
     }
-
-    pub fn clean(&mut self) {
-        // 清理环形缓冲区
-        self.hw_head = self.get_head() as usize;
-    }
 }
 impl Deref for RingInner {
     type Target = super::Ring<AdvRxDesc>;
@@ -176,6 +171,7 @@ pub struct RxRing(Arc<UnsafeCell<RingInner>>);
 unsafe impl Send for RxRing {}
 
 impl RxRing {
+    #[allow(clippy::arc_with_non_send_sync)]
     pub(crate) fn new(idx: usize, mmio_base: NonNull<u8>, size: usize) -> Result<Self, DError> {
         let base = Ring::new(
             idx,

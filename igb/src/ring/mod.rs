@@ -1,7 +1,7 @@
 use core::{cell::UnsafeCell, ptr::NonNull, time::Duration};
 
 use alloc::vec::Vec;
-use dma_api::{DSlice, DVec, Direction};
+use dma_api::{DVec, Direction};
 use futures::task::AtomicWaker;
 use log::debug;
 use mbarrier::mb;
@@ -104,9 +104,7 @@ struct RingElemMeta {
 struct Ring<D: Descriptor> {
     pub descriptors: DVec<D>,
     ring_base: NonNull<u8>,
-    current_head: usize,
-    hw_head: usize,
-    waker: AtomicWaker,
+    _waker: AtomicWaker,
     meta_ls: Vec<RingElemMeta>,
     pkts: Vec<DVec<u8>>,
     pkt_size: usize,
@@ -132,9 +130,7 @@ impl<D: Descriptor> Ring<D> {
         Ok(Self {
             descriptors,
             ring_base,
-            waker: AtomicWaker::new(),
-            current_head: 0,
-            hw_head: 0,
+            _waker: AtomicWaker::new(),
             meta_ls: alloc::vec![RingElemMeta::default(); size],
             pkts,
             pkt_size,
