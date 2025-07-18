@@ -142,12 +142,7 @@ unsafe impl Send for RxRing {}
 impl RxRing {
     #[allow(clippy::arc_with_non_send_sync)]
     pub(crate) fn new(idx: usize, mmio_base: NonNull<u8>, size: usize) -> Result<Self, DError> {
-        let base = Ring::new(
-            idx,
-            mmio_base,
-            size,
-            PACKET_SIZE as usize,
-        )?;
+        let base = Ring::new(idx, mmio_base, size, PACKET_SIZE as usize)?;
         let mut ring_inner = RingInner::new(base)?;
         ring_inner.init()?;
         let ring = Arc::new(UnsafeCell::new(ring_inner));

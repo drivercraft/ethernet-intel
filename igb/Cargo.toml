@@ -6,7 +6,8 @@ edition = "2024"
 keywords = ["os", "driver", "ethernet", "intel"]
 license = "MIT"
 name = "eth-igb"
-version = "0.1.0"
+version = "0.1.1"
+repository.workspace = true
 
 [dependencies]
 dma-api = {version = "0.4", features = ["alloc"]}
