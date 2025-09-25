@@ -10,7 +10,7 @@ version = "0.1.1"
 repository.workspace = true
 
 [dependencies]
-dma-api = {version = "0.4", features = ["alloc"]}
+dma-api = {version = "0.5", features = ["alloc"]}
 futures = {workspace = true}
 log = "0.4"
 mbarrier = "0.1"
@@ -19,7 +19,7 @@ tock-registers = {workspace = true}
 trait-ffi = "0.2"
 
 [dev-dependencies]
-bare-test = "0.6"
+bare-test = "0.7"
 pcie = "0.3"
 smoltcp = {version = "0.12", default-features = false, features = ["alloc", "medium-ethernet", "proto-ipv4", "socket-icmp"]}
 spin_on = "0.1"

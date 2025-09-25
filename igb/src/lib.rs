@@ -30,7 +30,7 @@ pub struct Request {
 
 impl Request {
     fn new(buff: Vec<u8>, dir: Direction) -> Self {
-        let buff = DVec::from_vec(buff, dir);
+        let buff = DVec::from_vec(u64::MAX, buff, dir).unwrap();
         Self { buff }
     }
     pub fn new_rx(buff: Vec<u8>) -> Self {

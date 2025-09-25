@@ -117,8 +117,7 @@ impl<D: Descriptor> Ring<D> {
         size: usize,
         pkt_size: usize,
     ) -> Result<Self, DError> {
-        let descriptors =
-            DVec::zeros(size, 0x1000, Direction::Bidirectional).ok_or(DError::NoMemory)?;
+        let descriptors = DVec::zeros(u64::MAX, size, 0x1000, Direction::Bidirectional).unwrap();
 
         let ring_base = unsafe { mmio_base.add(idx * 0x40) };
 
